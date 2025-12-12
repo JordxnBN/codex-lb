@@ -11,8 +11,8 @@ from urllib.parse import quote, urlencode
 import aiohttp
 from pydantic import ValidationError
 
-from app.core.clients.http import get_http_client
 from app.core.auth.models import DeviceCodePayload, OAuthTokenPayload
+from app.core.clients.http import get_http_client
 from app.core.config.settings import get_settings
 from app.core.types import JsonObject
 from app.core.utils.request_id import get_request_id
@@ -160,7 +160,10 @@ async def request_device_code(
             if resp.status == 404:
                 raise OAuthError(
                     "device_auth_unavailable",
-                    "Device code login is not enabled for this Codex server. Use the browser login or verify the server URL.",
+                    (
+                        "Device code login is not enabled for this Codex server. "
+                        "Use the browser login or verify the server URL."
+                    ),
                     resp.status,
                 )
             logger.warning(
