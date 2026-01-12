@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timezone
+
 import pytest
 
 from app.core.crypto import TokenEncryptor
@@ -17,6 +19,9 @@ pytestmark = pytest.mark.integration
 async def test_load_balancer_skips_secondary_quota(db_setup):
     encryptor = TokenEncryptor()
     now = utcnow()
+    now_epoch = int(now.replace(tzinfo=timezone.utc).timestamp())
+    primary_reset = now_epoch + 3600
+    secondary_reset = now_epoch + 7200
 
     account_a = Account(
         id="acc_secondary_full",
@@ -51,28 +56,28 @@ async def test_load_balancer_skips_secondary_quota(db_setup):
             account_id=account_a.id,
             used_percent=10.0,
             window="primary",
-            reset_at=1767678591,
+            reset_at=primary_reset,
             window_minutes=300,
         )
         await usage_repo.add_entry(
             account_id=account_a.id,
             used_percent=100.0,
             window="secondary",
-            reset_at=1767926925,
+            reset_at=secondary_reset,
             window_minutes=10080,
         )
         await usage_repo.add_entry(
             account_id=account_b.id,
             used_percent=20.0,
             window="primary",
-            reset_at=1767678591,
+            reset_at=primary_reset,
             window_minutes=300,
         )
         await usage_repo.add_entry(
             account_id=account_b.id,
             used_percent=50.0,
             window="secondary",
-            reset_at=1767926925,
+            reset_at=secondary_reset,
             window_minutes=10080,
         )
 
@@ -85,3 +90,54 @@ async def test_load_balancer_skips_secondary_quota(db_setup):
         refreshed = await session.get(Account, account_a.id)
         assert refreshed is not None
         assert refreshed.status == AccountStatus.QUOTA_EXCEEDED
+
+
+@pytest.mark.asyncio
+async def test_load_balancer_reactivates_after_secondary_reset(db_setup):
+    encryptor = TokenEncryptor()
+    now = utcnow()
+    now_epoch = int(now.replace(tzinfo=timezone.utc).timestamp())
+    primary_reset = now_epoch + 3600
+    secondary_reset = now_epoch + 7200
+
+    account = Account(
+        id="acc_secondary_reset",
+        email="secondary_reset@example.com",
+        plan_type="plus",
+        access_token_encrypted=encryptor.encrypt("access-reset"),
+        refresh_token_encrypted=encryptor.encrypt("refresh-reset"),
+        id_token_encrypted=encryptor.encrypt("id-reset"),
+        last_refresh=now,
+        status=AccountStatus.QUOTA_EXCEEDED,
+        deactivation_reason=None,
+    )
+
+    async with SessionLocal() as session:
+        accounts_repo = AccountsRepository(session)
+        usage_repo = UsageRepository(session)
+        await accounts_repo.upsert(account)
+
+        await usage_repo.add_entry(
+            account_id=account.id,
+            used_percent=5.0,
+            window="primary",
+            reset_at=primary_reset,
+            window_minutes=300,
+        )
+        await usage_repo.add_entry(
+            account_id=account.id,
+            used_percent=0.0,
+            window="secondary",
+            reset_at=secondary_reset,
+            window_minutes=10080,
+        )
+
+        balancer = LoadBalancer(accounts_repo, usage_repo)
+        selection = await balancer.select_account()
+
+        assert selection.account is not None
+        assert selection.account.id == account.id
+
+        refreshed = await session.get(Account, account.id)
+        assert refreshed is not None
+        assert refreshed.status == AccountStatus.ACTIVE

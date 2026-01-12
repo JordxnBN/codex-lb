@@ -49,5 +49,18 @@ def test_parse_sse_event_reads_json_payload():
     assert event.response.id == "resp_1"
 
 
+def test_parse_sse_event_reads_multiline_payload():
+    payload = {
+        "type": "response.failed",
+        "response": {"id": "resp_1", "status": "failed", "error": {"code": "upstream_error"}},
+    }
+    line = f"event: response.failed\ndata: {json.dumps(payload)}\n\n"
+    event = parse_sse_event(line)
+    assert event is not None
+    assert event.type == "response.failed"
+    assert event.response
+    assert event.response.id == "resp_1"
+
+
 def test_parse_sse_event_ignores_non_data_lines():
     assert parse_sse_event("event: ping\n") is None

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from typing import Iterable
 
 from app.core.balancer import (
     AccountState,
@@ -11,7 +12,7 @@ from app.core.balancer import (
     select_account,
 )
 from app.core.balancer.types import UpstreamError
-from app.db.models import Account, AccountStatus
+from app.db.models import Account, AccountStatus, UsageHistory
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.proxy.usage_updater import UsageUpdater
 from app.modules.usage.repository import UsageRepository
@@ -45,42 +46,12 @@ class LoadBalancer:
         latest_primary = await self._usage_repo.latest_by_account()
         latest_secondary = await self._usage_repo.latest_by_account(window="secondary")
 
-        states: list[AccountState] = []
-        account_map: dict[str, Account] = {}
-
-        for account in accounts:
-            runtime = self._runtime.setdefault(account.id, RuntimeState())
-            primary_entry = latest_primary.get(account.id)
-            secondary_entry = latest_secondary.get(account.id)
-            status = account.status
-            used_percent = primary_entry.used_percent if primary_entry else None
-            reset_at = runtime.reset_at
-
-            secondary_used = secondary_entry.used_percent if secondary_entry is not None else None
-            secondary_reset = secondary_entry.reset_at if secondary_entry else None
-            if (
-                status not in (AccountStatus.DEACTIVATED, AccountStatus.PAUSED)
-                and secondary_used is not None
-                and secondary_used >= 100.0
-            ):
-                status = AccountStatus.QUOTA_EXCEEDED
-                used_percent = 100.0
-                if secondary_reset is not None:
-                    reset_at = secondary_reset
-            elif status == AccountStatus.QUOTA_EXCEEDED and secondary_reset is not None:
-                reset_at = secondary_reset
-            state = AccountState(
-                account_id=account.id,
-                status=status,
-                used_percent=used_percent,
-                reset_at=reset_at,
-                last_error_at=runtime.last_error_at,
-                last_selected_at=runtime.last_selected_at,
-                error_count=runtime.error_count,
-                deactivation_reason=account.deactivation_reason,
-            )
-            states.append(state)
-            account_map[account.id] = account
+        states, account_map = _build_states(
+            accounts=accounts,
+            latest_primary=latest_primary,
+            latest_secondary=latest_secondary,
+            runtime=self._runtime,
+        )
 
         result = select_account(states)
         for state in states:
@@ -149,3 +120,89 @@ class LoadBalancer:
             )
             account.status = state.status
             account.deactivation_reason = state.deactivation_reason
+
+
+def _build_states(
+    *,
+    accounts: Iterable[Account],
+    latest_primary: dict[str, UsageHistory],
+    latest_secondary: dict[str, UsageHistory],
+    runtime: dict[str, RuntimeState],
+) -> tuple[list[AccountState], dict[str, Account]]:
+    states: list[AccountState] = []
+    account_map: dict[str, Account] = {}
+
+    for account in accounts:
+        state = _state_from_account(
+            account=account,
+            primary_entry=latest_primary.get(account.id),
+            secondary_entry=latest_secondary.get(account.id),
+            runtime=runtime.setdefault(account.id, RuntimeState()),
+        )
+        states.append(state)
+        account_map[account.id] = account
+    return states, account_map
+
+
+def _state_from_account(
+    *,
+    account: Account,
+    primary_entry: UsageHistory | None,
+    secondary_entry: UsageHistory | None,
+    runtime: RuntimeState,
+) -> AccountState:
+    primary_used = primary_entry.used_percent if primary_entry else None
+    secondary_used = secondary_entry.used_percent if secondary_entry else None
+    secondary_reset = secondary_entry.reset_at if secondary_entry else None
+
+    status, used_percent, reset_at = _apply_secondary_quota(
+        status=account.status,
+        primary_used=primary_used,
+        runtime_reset=runtime.reset_at,
+        secondary_used=secondary_used,
+        secondary_reset=secondary_reset,
+    )
+
+    return AccountState(
+        account_id=account.id,
+        status=status,
+        used_percent=used_percent,
+        reset_at=reset_at,
+        last_error_at=runtime.last_error_at,
+        last_selected_at=runtime.last_selected_at,
+        error_count=runtime.error_count,
+        deactivation_reason=account.deactivation_reason,
+    )
+
+
+def _apply_secondary_quota(
+    *,
+    status: AccountStatus,
+    primary_used: float | None,
+    runtime_reset: int | None,
+    secondary_used: float | None,
+    secondary_reset: int | None,
+) -> tuple[AccountStatus, float | None, int | None]:
+    used_percent = primary_used
+    reset_at = runtime_reset
+
+    if status in (AccountStatus.DEACTIVATED, AccountStatus.PAUSED):
+        return status, used_percent, reset_at
+
+    if secondary_used is None:
+        if status == AccountStatus.QUOTA_EXCEEDED and secondary_reset is not None:
+            reset_at = secondary_reset
+        return status, used_percent, reset_at
+
+    if secondary_used >= 100.0:
+        status = AccountStatus.QUOTA_EXCEEDED
+        used_percent = 100.0
+        if secondary_reset is not None:
+            reset_at = secondary_reset
+        return status, used_percent, reset_at
+
+    if status == AccountStatus.QUOTA_EXCEEDED:
+        status = AccountStatus.ACTIVE
+        reset_at = None
+
+    return status, used_percent, reset_at

@@ -12,9 +12,16 @@ _RESPONSE_ADAPTER = TypeAdapter(OpenAIResponsePayload)
 
 
 def parse_sse_event(line: str) -> OpenAIEvent | None:
-    if not line.startswith("data:"):
+    data = None
+    if line.startswith("data:"):
+        data = line[5:].strip()
+    elif "\n" in line:
+        for part in line.splitlines():
+            if part.startswith("data:"):
+                data = part[5:].strip()
+                break
+    if data is None:
         return None
-    data = line[5:].strip()
     if not data or data == "[DONE]":
         return None
     try:
