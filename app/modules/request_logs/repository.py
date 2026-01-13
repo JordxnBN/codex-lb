@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
 from sqlalchemy import and_, select
@@ -49,9 +50,13 @@ class RequestLogsRepository:
             requested_at=requested_at or utcnow(),
         )
         self._session.add(log)
-        await self._session.commit()
-        await self._session.refresh(log)
-        return log
+        try:
+            await self._session.commit()
+            await self._session.refresh(log)
+            return log
+        except BaseException:
+            await _safe_rollback(self._session)
+            raise
 
     async def list_recent(
         self,
@@ -84,3 +89,12 @@ class RequestLogsRepository:
             stmt = stmt.limit(limit)
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
+
+
+async def _safe_rollback(session: AsyncSession) -> None:
+    if not session.in_transaction():
+        return
+    try:
+        await asyncio.shield(session.rollback())
+    except Exception:
+        return

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from datetime import timedelta
 from typing import AsyncIterator, Iterable, Mapping
@@ -35,6 +36,8 @@ from app.modules.proxy.types import (
 from app.modules.proxy.usage_updater import UsageUpdater
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.usage.repository import UsageRepository
+
+logger = logging.getLogger(__name__)
 
 
 class ProxyService:
@@ -191,6 +194,7 @@ class ProxyService:
                 yield format_sse_event(event)
                 return
 
+            account_id_value = account.id
             try:
                 account = await self._ensure_fresh(account)
                 async for line in self._stream_once(
@@ -243,7 +247,15 @@ class ProxyService:
                     await self._load_balancer.mark_permanent_failure(account, exc.code)
                 continue
             except Exception:
-                await self._load_balancer.record_error(account)
+                try:
+                    await self._load_balancer.record_error(account)
+                except Exception:
+                    logger.warning(
+                        "Failed to record proxy error account_id=%s request_id=%s",
+                        account_id_value,
+                        request_id,
+                        exc_info=True,
+                    )
                 if attempt == max_attempts - 1:
                     event = response_failed_event(
                         "upstream_error",
@@ -267,8 +279,9 @@ class ProxyService:
         request_id: str,
         allow_retry: bool,
     ) -> AsyncIterator[str]:
+        account_id_value = account.id
         access_token = self._encryptor.decrypt(account.access_token_encrypted)
-        account_id = _header_account_id(account.id)
+        account_id = _header_account_id(account_id_value)
         model = payload.model
         start = time.monotonic()
         status = "success"
@@ -341,19 +354,27 @@ class ProxyService:
             reasoning_tokens = (
                 usage.output_tokens_details.reasoning_tokens if usage and usage.output_tokens_details else None
             )
-            await self._logs_repo.add_log(
-                account_id=account.id,
-                request_id=request_id,
-                model=model,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cached_input_tokens=cached_input_tokens,
-                reasoning_tokens=reasoning_tokens,
-                latency_ms=latency_ms,
-                status=status,
-                error_code=error_code,
-                error_message=error_message,
-            )
+            try:
+                await self._logs_repo.add_log(
+                    account_id=account_id_value,
+                    request_id=request_id,
+                    model=model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cached_input_tokens=cached_input_tokens,
+                    reasoning_tokens=reasoning_tokens,
+                    latency_ms=latency_ms,
+                    status=status,
+                    error_code=error_code,
+                    error_message=error_message,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to persist request log account_id=%s request_id=%s",
+                    account_id_value,
+                    request_id,
+                    exc_info=True,
+                )
 
     async def _refresh_usage(self, accounts: list[Account]) -> None:
         latest_usage = await self._usage_repo.latest_by_account(window="primary")

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.session import SessionLocal, get_session
+from app.db.session import SessionLocal, _safe_close, _safe_rollback, get_session
 from app.modules.accounts.repository import AccountsRepository
 from app.modules.accounts.service import AccountsService
 from app.modules.oauth.service import OauthService
@@ -87,15 +87,16 @@ def get_usage_context(
 
 @asynccontextmanager
 async def _accounts_repo_context() -> AsyncIterator[AccountsRepository]:
-    async with SessionLocal() as session:
-        try:
-            yield AccountsRepository(session)
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            if session.in_transaction():
-                await session.rollback()
+    session = SessionLocal()
+    try:
+        yield AccountsRepository(session)
+    except BaseException:
+        await _safe_rollback(session)
+        raise
+    finally:
+        if session.in_transaction():
+            await _safe_rollback(session)
+        await _safe_close(session)
 
 
 def get_oauth_context(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import AsyncIterator
 
@@ -23,16 +24,33 @@ def _ensure_sqlite_dir(url: str) -> None:
     Path(path).expanduser().parent.mkdir(parents=True, exist_ok=True)
 
 
+async def _safe_rollback(session: AsyncSession) -> None:
+    if not session.in_transaction():
+        return
+    try:
+        await asyncio.shield(session.rollback())
+    except Exception:
+        return
+
+
+async def _safe_close(session: AsyncSession) -> None:
+    try:
+        await asyncio.shield(session.close())
+    except Exception:
+        return
+
+
 async def get_session() -> AsyncIterator[AsyncSession]:
-    async with SessionLocal() as session:
-        try:
-            yield session
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            if session.in_transaction():
-                await session.rollback()
+    session = SessionLocal()
+    try:
+        yield session
+    except BaseException:
+        await _safe_rollback(session)
+        raise
+    finally:
+        if session.in_transaction():
+            await _safe_rollback(session)
+        await _safe_close(session)
 
 
 async def init_db() -> None:
