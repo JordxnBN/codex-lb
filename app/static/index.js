@@ -187,6 +187,7 @@
 		metrics: {
 			requests7d: 0,
 			tokensSecondaryWindow: null,
+			cachedTokensSecondaryWindow: null,
 			cost7d: 0,
 			errorRate7d: null,
 			topError: "",
@@ -240,6 +241,18 @@
 			return "--";
 		}
 		return compactFormatter.format(numeric);
+	};
+
+	const formatTokensWithCached = (totalTokens, cachedInputTokens) => {
+		const total = toNumber(totalTokens);
+		if (total === null) {
+			return "--";
+		}
+		const cached = toNumber(cachedInputTokens);
+		if (cached === null || cached <= 0) {
+			return formatCompactNumber(total);
+		}
+		return `${formatCompactNumber(total)} (${formatCompactNumber(cached)} Cached)`;
 	};
 
 	const formatModelLabel = (model, reasoningEffort) => {
@@ -580,6 +593,7 @@
 			reasoningEffort: entry.reasoningEffort ?? null,
 			status: entry.status,
 			tokens: toNumber(entry.tokens),
+			cachedInputTokens: toNumber(entry.cachedInputTokens),
 			cost: toNumber(entry.costUsd),
 			errorCode: entry.errorCode ?? null,
 			errorMessage: entry.errorMessage ?? null,
@@ -667,6 +681,7 @@
 		const metrics = summary?.metrics || {};
 		const requests7d = toNumber(metrics.requests7d) ?? 0;
 		const tokensSecondaryWindow = toNumber(metrics.tokensSecondaryWindow);
+		const cachedTokensSecondaryWindow = toNumber(metrics.cachedTokensSecondaryWindow);
 		const errorRate7d = toNumber(metrics.errorRate7d);
 		const topError = metrics.topError || "";
 		return {
@@ -678,6 +693,7 @@
 			metrics: {
 				requests7d,
 				tokensSecondaryWindow,
+				cachedTokensSecondaryWindow,
 				cost7d: toNumber(summary?.cost?.totalUsd7d) || 0,
 				errorRate7d,
 				topError,
@@ -807,7 +823,10 @@
 		const stats = [
 			{
 				title: `Tokens (${formatWindowLabel("secondary", secondaryWindowMinutes)})`,
-				value: formatCompactNumber(metrics.tokensSecondaryWindow),
+				value: formatTokensWithCached(
+					metrics.tokensSecondaryWindow,
+					metrics.cachedTokensSecondaryWindow,
+				),
 				meta: "Scope: responses",
 			},
 			{
@@ -908,7 +927,7 @@
 					class: requestStatusClass(request.status),
 					label: requestStatusLabel(request.status),
 				},
-				tokens: formatNumber(request.tokens),
+				tokens: formatTokensWithCached(request.tokens, request.cachedInputTokens),
 				cost: formatCurrency(request.cost),
 				error: rawError ? truncateText(rawError, 80) : "--",
 				errorTitle: rawError,
