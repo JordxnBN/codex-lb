@@ -104,7 +104,9 @@ async def test_proxy_responses_streams_upstream(async_client, monkeypatch):
 
     async with SessionLocal() as session:
         result = await session.execute(
-            select(RequestLog).where(RequestLog.account_id == expected_account_id).order_by(RequestLog.requested_at.desc())
+            select(RequestLog)
+            .where(RequestLog.account_id == expected_account_id)
+            .order_by(RequestLog.requested_at.desc())
         )
         log = result.scalars().first()
         assert log is not None
