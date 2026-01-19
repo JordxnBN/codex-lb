@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import cast
 
-from app.core.usage.logs import cost_from_log, total_tokens_from_log
+from app.core.usage.logs import RequestLogLike, cost_from_log, total_tokens_from_log
 from app.db.models import RequestLog
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.request_logs.schemas import RequestLogEntry
@@ -63,6 +64,7 @@ def _log_status(log: RequestLog) -> str:
 
 
 def _to_entry(log: RequestLog) -> RequestLogEntry:
+    log_like = cast(RequestLogLike, log)
     return RequestLogEntry(
         requested_at=log.requested_at,
         account_id=log.account_id,
@@ -72,7 +74,8 @@ def _to_entry(log: RequestLog) -> RequestLogEntry:
         status=_log_status(log),
         error_code=log.error_code,
         error_message=log.error_message,
-        tokens=total_tokens_from_log(log),
-        cost_usd=cost_from_log(log, precision=6),
+        tokens=total_tokens_from_log(log_like),
+        cached_input_tokens=log.cached_input_tokens,
+        cost_usd=cost_from_log(log_like, precision=6),
         latency_ms=log.latency_ms,
     )

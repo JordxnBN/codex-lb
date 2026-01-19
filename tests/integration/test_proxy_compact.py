@@ -121,4 +121,4 @@ async def test_proxy_compact_usage_limit_marks_account(async_client, monkeypatch
     async with SessionLocal() as session:
         account = await session.get(Account, "acc_limit")
         assert account is not None
-        assert account.status == AccountStatus.RATE_LIMITED
+        assert account.status == AccountStatus.QUOTA_EXCEEDED

@@ -18,7 +18,6 @@ IGNORE_INBOUND_HEADERS = {"authorization", "chatgpt-account-id", "content-length
 
 _ERROR_TYPE_CODE_MAP = {
     "rate_limit_exceeded": "rate_limit_exceeded",
-    "usage_limit_reached": "rate_limit_exceeded",
     "usage_not_included": "usage_not_included",
     "insufficient_quota": "insufficient_quota",
     "quota_exceeded": "quota_exceeded",
@@ -64,12 +63,11 @@ def _normalize_error_code(code: str | None, error_type: str | None) -> str:
     if code:
         normalized_code = code.lower()
         mapped = _ERROR_TYPE_CODE_MAP.get(normalized_code)
-        return mapped or code
+        return mapped or normalized_code
     normalized_type = error_type.lower() if error_type else None
     if normalized_type:
         mapped = _ERROR_TYPE_CODE_MAP.get(normalized_type)
-        if mapped:
-            return mapped
+        return mapped or normalized_type
     return "upstream_error"
 
 

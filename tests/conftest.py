@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 
 TEST_DB_DIR = Path(tempfile.mkdtemp(prefix="codex-lb-tests-"))
 TEST_DB_PATH = TEST_DB_DIR / "codex-lb.db"
@@ -24,6 +25,7 @@ from app.main import create_app  # noqa: E402
 async def app_instance():
     app = create_app()
     async with engine.begin() as conn:
+        await conn.execute(text("DROP TABLE IF EXISTS schema_migrations"))
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     return app
@@ -38,6 +40,7 @@ async def dispose_engine():
 @pytest_asyncio.fixture
 async def db_setup():
     async with engine.begin() as conn:
+        await conn.execute(text("DROP TABLE IF EXISTS schema_migrations"))
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
     return True

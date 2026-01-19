@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Iterable, Mapping
 
+from app.core.plan_types import normalize_account_plan_type
 from app.core.usage.types import (
     UsageCostSummary,
     UsageHistoryPayload,
@@ -134,9 +135,9 @@ def summarize_usage_window(
 
 
 def capacity_for_plan(plan_type: str | None, window: str) -> float | None:
-    if not plan_type:
+    normalized = normalize_account_plan_type(plan_type)
+    if not normalized:
         return None
-    normalized = plan_type.lower()
     window_key = _normalize_window_key(window)
     if window_key == "primary":
         return PLAN_CAPACITY_CREDITS_PRIMARY.get(normalized)

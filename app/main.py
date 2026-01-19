@@ -11,7 +11,7 @@ from fastapi.exception_handlers import (
     request_validation_exception_handler,
 )
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -57,7 +57,7 @@ def create_app() -> FastAPI:
         return response
 
     @app.middleware("http")
-    async def api_unhandled_error_middleware(request: Request, call_next) -> JSONResponse:
+    async def api_unhandled_error_middleware(request: Request, call_next) -> Response:
         try:
             return await call_next(request)
         except Exception:
@@ -76,7 +76,7 @@ def create_app() -> FastAPI:
     async def _validation_error_handler(
         request: Request,
         exc: RequestValidationError,
-    ) -> JSONResponse:
+    ) -> Response:
         if request.url.path.startswith("/api/"):
             return JSONResponse(
                 status_code=422,
@@ -88,7 +88,7 @@ def create_app() -> FastAPI:
     async def _http_error_handler(
         request: Request,
         exc: StarletteHTTPException,
-    ) -> JSONResponse:
+    ) -> Response:
         if request.url.path.startswith("/api/"):
             detail = exc.detail if isinstance(exc.detail, str) else "Request failed"
             return JSONResponse(

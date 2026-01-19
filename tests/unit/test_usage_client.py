@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pytest
 
 from app.core.clients.usage import UsageFetchError, fetch_usage
@@ -22,11 +24,18 @@ class StubResponse:
         return self._text
 
 
+@dataclass
+class UsageClientState:
+    calls: int = 0
+    auth: str | None = None
+    account: str | None = None
+
+
 class StubRequestContext:
     def __init__(
         self,
         responses: list[StubResponse],
-        state: dict[str, object],
+        state: UsageClientState,
         headers: dict[str, str],
         retry_options: object | None,
     ) -> None:
@@ -40,11 +49,11 @@ class StubRequestContext:
         statuses = set(getattr(self._retry_options, "statuses", set()))
         response: StubResponse | None = None
         for attempt in range(attempts):
-            index = min(self._state["calls"], len(self._responses) - 1)
+            index = min(self._state.calls, len(self._responses) - 1)
             response = self._responses[index]
-            self._state["calls"] += 1
-            self._state["auth"] = self._headers.get("Authorization")
-            self._state["account"] = self._headers.get("chatgpt-account-id")
+            self._state.calls += 1
+            self._state.auth = self._headers.get("Authorization")
+            self._state.account = self._headers.get("chatgpt-account-id")
             if response.status in statuses and attempt < attempts - 1:
                 continue
             return response
@@ -57,7 +66,7 @@ class StubRequestContext:
 
 
 class StubRetryClient:
-    def __init__(self, responses: list[StubResponse], state: dict[str, object]) -> None:
+    def __init__(self, responses: list[StubResponse], state: UsageClientState) -> None:
         self._responses = responses
         self._state = state
 
@@ -73,8 +82,8 @@ class StubRetryClient:
 
 
 @pytest.fixture
-def usage_server() -> tuple[str, StubRetryClient, dict[str, object]]:
-    state: dict[str, object] = {"calls": 0, "auth": None, "account": None}
+def usage_server() -> tuple[str, StubRetryClient, UsageClientState]:
+    state = UsageClientState()
     responses = [
         StubResponse(503, None, "busy"),
         StubResponse(
@@ -99,7 +108,7 @@ def usage_server() -> tuple[str, StubRetryClient, dict[str, object]]:
 
 @pytest.fixture
 def failing_usage_server() -> tuple[str, StubRetryClient]:
-    state: dict[str, object] = {"calls": 0, "auth": None, "account": None}
+    state = UsageClientState()
     responses = [StubResponse(503, None, "busy")]
     client = StubRetryClient(responses, state)
     return "http://usage.test/backend-api", client
@@ -117,9 +126,9 @@ async def test_fetch_usage_retries_and_returns_payload(usage_server):
         client=client,
     )
     assert data.plan_type == "plus"
-    assert state["calls"] == 2
-    assert state["auth"] == "Bearer access-token"
-    assert state["account"] == "acc_test"
+    assert state.calls == 2
+    assert state.auth == "Bearer access-token"
+    assert state.account == "acc_test"
 
 
 @pytest.mark.asyncio

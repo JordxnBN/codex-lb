@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from app.modules.health.schemas import HealthResponse
+
 router = APIRouter(tags=["health"])
 
 
-@router.get("/health")
-async def health_check() -> dict:
-    return {"status": "ok"}
+@router.get("/health", response_model=HealthResponse)
+async def health_check() -> HealthResponse:
+    return HealthResponse(status="ok")

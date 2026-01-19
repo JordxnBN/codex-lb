@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import cast
 
 from app.core import usage as usage_core
-from app.core.usage.logs import cost_from_log, total_tokens_from_log, usage_tokens_from_log
+from app.core.usage.logs import RequestLogLike, cost_from_log, total_tokens_from_log, usage_tokens_from_log
 from app.core.usage.pricing import CostItem, calculate_costs
 from app.core.usage.types import (
     UsageCostSummary,
@@ -15,7 +16,6 @@ from app.core.usage.types import (
 from app.core.utils.time import from_epoch_seconds, utcnow
 from app.db.models import Account, RequestLog
 from app.modules.accounts.repository import AccountsRepository
-from app.modules.proxy.usage_updater import UsageUpdater
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.usage.repository import UsageRepository
 from app.modules.usage.schemas import (
@@ -28,6 +28,7 @@ from app.modules.usage.schemas import (
     UsageWindow,
     UsageWindowResponse,
 )
+from app.modules.usage.updater import UsageUpdater
 
 
 class UsageService:
@@ -137,7 +138,7 @@ def _build_account_history(
     for log in logs:
         account_id = log.account_id
         counts[account_id] = counts.get(account_id, 0) + 1
-        cost = cost_from_log(log)
+        cost = cost_from_log(cast(RequestLogLike, log))
         if cost is None:
             continue
         costs[account_id] = costs.get(account_id, 0.0) + cost
@@ -166,7 +167,7 @@ def _build_account_history(
 
 def _log_to_cost_item(log: RequestLog) -> CostItem | None:
     model = log.model
-    usage = usage_tokens_from_log(log)
+    usage = usage_tokens_from_log(cast(RequestLogLike, log))
     if not model or not usage:
         return None
     return CostItem(model=model, usage=usage)
@@ -191,7 +192,7 @@ def _usage_metrics(logs_secondary: list[RequestLog]) -> UsageMetricsSummary:
 def _sum_tokens(logs: list[RequestLog]) -> int:
     total = 0
     for log in logs:
-        total += total_tokens_from_log(log) or 0
+        total += total_tokens_from_log(cast(RequestLogLike, log)) or 0
     return total
 
 
@@ -232,7 +233,7 @@ def _window_snapshot_to_model(snapshot: UsageWindowSnapshot) -> UsageWindow:
 def _cost_summary_to_model(cost: UsageCostSummary) -> UsageCost:
     return UsageCost(
         currency=cost.currency,
-        total_usd_7d=cost.total_usd_7d,
+        totalUsd7d=cost.total_usd_7d,
         by_model=[UsageCostByModel(model=item.model, usd=item.usd) for item in cost.by_model],
     )
 

@@ -12,8 +12,8 @@ from app.core.usage.models import UsagePayload
 from app.core.utils.request_id import get_request_id
 from app.core.utils.time import utcnow
 from app.db.models import Account, AccountStatus, UsageHistory
+from app.modules.accounts.auth_manager import AuthManager
 from app.modules.accounts.repository import AccountsRepository
-from app.modules.proxy.auth_manager import AuthManager
 from app.modules.usage.repository import UsageRepository
 
 logger = logging.getLogger(__name__)

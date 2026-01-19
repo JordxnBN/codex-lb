@@ -22,8 +22,6 @@ from app.modules.usage.service import UsageService
 class AccountsContext:
     session: AsyncSession
     repository: AccountsRepository
-    usage_repository: UsageRepository
-    request_logs_repository: RequestLogsRepository
     service: AccountsService
 
 
@@ -31,8 +29,6 @@ class AccountsContext:
 class UsageContext:
     session: AsyncSession
     usage_repository: UsageRepository
-    request_logs_repository: RequestLogsRepository
-    accounts_repository: AccountsRepository
     service: UsageService
 
 
@@ -63,8 +59,6 @@ def get_accounts_context(
     return AccountsContext(
         session=session,
         repository=repository,
-        usage_repository=usage_repository,
-        request_logs_repository=request_logs_repository,
         service=service,
     )
 
@@ -79,8 +73,6 @@ def get_usage_context(
     return UsageContext(
         session=session,
         usage_repository=usage_repository,
-        request_logs_repository=request_logs_repository,
-        accounts_repository=accounts_repository,
         service=service,
     )
 

@@ -74,11 +74,15 @@
 		error: "deactivated",
 	};
 
-	const PLAN_LABELS = {
-		plus: "Plus",
-		team: "Team",
-		free: "Free",
-	};
+	const KNOWN_PLAN_TYPES = new Set([
+		"free",
+		"plus",
+		"pro",
+		"team",
+		"business",
+		"enterprise",
+		"edu",
+	]);
 
 	const ROUTING_LABELS = {
 		usage_weighted: "usage weighted",
@@ -92,7 +96,7 @@
 		timeout: "timeout",
 		upstream: "upstream",
 		rate_limit_exceeded: "rate limit",
-		usage_limit_reached: "rate limit",
+		usage_limit_reached: "quota",
 		insufficient_quota: "quota",
 		usage_not_included: "quota",
 		quota_exceeded: "quota",
@@ -457,7 +461,19 @@
 		REQUEST_STATUS_LABELS[status] || "Unknown";
 	const requestStatusClass = (status) =>
 		REQUEST_STATUS_CLASSES[status] || "deactivated";
-	const planLabel = (plan) => PLAN_LABELS[plan] || "Unknown";
+	const normalizePlanType = (plan) => {
+		if (plan === null || plan === undefined) {
+			return null;
+		}
+		const value = String(plan).trim().toLowerCase();
+		return KNOWN_PLAN_TYPES.has(value) ? value : null;
+	};
+	const titleCase = (value) =>
+		value ? value.charAt(0).toUpperCase() + value.slice(1).toLowerCase() : "";
+	const planLabel = (plan) => {
+		const normalized = normalizePlanType(plan);
+		return normalized ? titleCase(normalized) : "Unknown";
+	};
 	const routingLabel = (strategy) => ROUTING_LABELS[strategy] || "unknown";
 	const errorLabel = (code) => ERROR_LABELS[code] || "--";
 	const progressClass = (status) => PROGRESS_CLASS_BY_STATUS[status] || "";

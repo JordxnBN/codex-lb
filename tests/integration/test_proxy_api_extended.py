@@ -176,7 +176,7 @@ async def test_proxy_stream_retries_rate_limit_then_success(async_client, monkey
         acc2 = await session.get(Account, "acc_2")
         assert acc1 is not None
         assert acc2 is not None
-        assert acc1.status == AccountStatus.RATE_LIMITED
+        assert acc1.status == AccountStatus.ACTIVE
         assert acc2.status == AccountStatus.ACTIVE
 
 
@@ -212,4 +212,4 @@ async def test_proxy_stream_usage_limit_returns_http_error(async_client, monkeyp
     async with SessionLocal() as session:
         acc = await session.get(Account, "acc_limit")
         assert acc is not None
-        assert acc.status == AccountStatus.RATE_LIMITED
+        assert acc.status == AccountStatus.QUOTA_EXCEEDED

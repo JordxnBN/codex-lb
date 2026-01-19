@@ -23,6 +23,7 @@ class AccountState:
     status: AccountStatus
     used_percent: float | None = None
     reset_at: float | None = None
+    cooldown_until: float | None = None
     last_error_at: float | None = None
     last_selected_at: float | None = None
     error_count: int = 0
@@ -59,6 +60,12 @@ def select_account(states: Iterable[AccountState], now: float | None = None) -> 
                 state.reset_at = None
             else:
                 continue
+        if state.cooldown_until and current >= state.cooldown_until:
+            state.cooldown_until = None
+            state.last_error_at = None
+            state.error_count = 0
+        if state.cooldown_until and current < state.cooldown_until:
+            continue
         if state.error_count >= 3:
             backoff = min(300, 30 * (2 ** (state.error_count - 3)))
             if state.last_error_at and current - state.last_error_at < backoff:
@@ -82,6 +89,10 @@ def select_account(states: Iterable[AccountState], now: float | None = None) -> 
             if reset_candidates:
                 wait_seconds = max(0, min(reset_candidates) - int(current))
                 return SelectionResult(None, f"Rate limit exceeded. Try again in {wait_seconds:.0f}s")
+        cooldowns = [s.cooldown_until for s in all_states if s.cooldown_until and s.cooldown_until > current]
+        if cooldowns:
+            wait_seconds = max(0.0, min(cooldowns) - current)
+            return SelectionResult(None, f"Rate limit exceeded. Try again in {wait_seconds:.0f}s")
         return SelectionResult(None, "No available accounts")
 
     def _sort_key(state: AccountState) -> tuple[float, float, str]:
@@ -94,14 +105,13 @@ def select_account(states: Iterable[AccountState], now: float | None = None) -> 
 
 
 def handle_rate_limit(state: AccountState, error: UpstreamError) -> None:
-    state.status = AccountStatus.RATE_LIMITED
     state.error_count += 1
     state.last_error_at = time.time()
     message = error.get("message")
     delay = parse_retry_after(message) if message else None
     if delay is None:
         delay = backoff_seconds(state.error_count)
-    state.reset_at = time.time() + delay
+    state.cooldown_until = time.time() + delay
 
 
 def handle_quota_exceeded(state: AccountState, error: UpstreamError) -> None:

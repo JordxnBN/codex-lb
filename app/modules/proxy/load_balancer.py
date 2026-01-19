@@ -12,15 +12,17 @@ from app.core.balancer import (
     select_account,
 )
 from app.core.balancer.types import UpstreamError
-from app.db.models import Account, AccountStatus, UsageHistory
+from app.core.usage.quota import apply_usage_quota
+from app.db.models import Account, UsageHistory
 from app.modules.accounts.repository import AccountsRepository
-from app.modules.proxy.usage_updater import UsageUpdater
 from app.modules.usage.repository import UsageRepository
+from app.modules.usage.updater import UsageUpdater
 
 
 @dataclass
 class RuntimeState:
     reset_at: float | None = None
+    cooldown_until: float | None = None
     last_error_at: float | None = None
     last_selected_at: float | None = None
     error_count: int = 0
@@ -100,6 +102,7 @@ class LoadBalancer:
             status=account.status,
             used_percent=None,
             reset_at=runtime.reset_at,
+            cooldown_until=runtime.cooldown_until,
             last_error_at=runtime.last_error_at,
             last_selected_at=runtime.last_selected_at,
             error_count=runtime.error_count,
@@ -109,6 +112,7 @@ class LoadBalancer:
     async def _sync_state(self, account: Account, state: AccountState) -> None:
         runtime = self._runtime.setdefault(account.id, RuntimeState())
         runtime.reset_at = state.reset_at
+        runtime.cooldown_until = state.cooldown_until
         runtime.last_error_at = state.last_error_at
         runtime.error_count = state.error_count
 
@@ -152,12 +156,16 @@ def _state_from_account(
     runtime: RuntimeState,
 ) -> AccountState:
     primary_used = primary_entry.used_percent if primary_entry else None
+    primary_reset = primary_entry.reset_at if primary_entry else None
+    primary_window_minutes = primary_entry.window_minutes if primary_entry else None
     secondary_used = secondary_entry.used_percent if secondary_entry else None
     secondary_reset = secondary_entry.reset_at if secondary_entry else None
 
-    status, used_percent, reset_at = _apply_secondary_quota(
+    status, used_percent, reset_at = apply_usage_quota(
         status=account.status,
         primary_used=primary_used,
+        primary_reset=primary_reset,
+        primary_window_minutes=primary_window_minutes,
         runtime_reset=runtime.reset_at,
         secondary_used=secondary_used,
         secondary_reset=secondary_reset,
@@ -168,41 +176,9 @@ def _state_from_account(
         status=status,
         used_percent=used_percent,
         reset_at=reset_at,
+        cooldown_until=runtime.cooldown_until,
         last_error_at=runtime.last_error_at,
         last_selected_at=runtime.last_selected_at,
         error_count=runtime.error_count,
         deactivation_reason=account.deactivation_reason,
     )
-
-
-def _apply_secondary_quota(
-    *,
-    status: AccountStatus,
-    primary_used: float | None,
-    runtime_reset: float | None,
-    secondary_used: float | None,
-    secondary_reset: int | None,
-) -> tuple[AccountStatus, float | None, float | None]:
-    used_percent = primary_used
-    reset_at = runtime_reset
-
-    if status in (AccountStatus.DEACTIVATED, AccountStatus.PAUSED):
-        return status, used_percent, reset_at
-
-    if secondary_used is None:
-        if status == AccountStatus.QUOTA_EXCEEDED and secondary_reset is not None:
-            reset_at = secondary_reset
-        return status, used_percent, reset_at
-
-    if secondary_used >= 100.0:
-        status = AccountStatus.QUOTA_EXCEEDED
-        used_percent = 100.0
-        if secondary_reset is not None:
-            reset_at = secondary_reset
-        return status, used_percent, reset_at
-
-    if status == AccountStatus.QUOTA_EXCEEDED:
-        status = AccountStatus.ACTIVE
-        reset_at = None
-
-    return status, used_percent, reset_at

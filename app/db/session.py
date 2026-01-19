@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from typing import AsyncIterator
 
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config.settings import get_settings
+from app.db.migrations import run_migrations
 
 DATABASE_URL = get_settings().database_url
+
+logger = logging.getLogger(__name__)
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
@@ -61,12 +64,13 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        if DATABASE_URL.startswith("sqlite"):
-            await _ensure_sqlite_request_logs_columns(conn)
 
-
-async def _ensure_sqlite_request_logs_columns(conn) -> None:
-    result = await conn.execute(text("PRAGMA table_info(request_logs)"))
-    columns = {row[1] for row in result.fetchall()}
-    if "reasoning_effort" not in columns:
-        await conn.execute(text("ALTER TABLE request_logs ADD COLUMN reasoning_effort VARCHAR"))
+    async with SessionLocal() as session:
+        try:
+            updated = await run_migrations(session)
+            if updated:
+                logger.info("Applied database migrations count=%s", updated)
+        except Exception:
+            logger.exception("Failed to apply database migrations")
+            if get_settings().database_migrations_fail_fast:
+                raise

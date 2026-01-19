@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from app.core.balancer import (
@@ -11,6 +9,7 @@ from app.core.balancer import (
     handle_rate_limit,
     select_account,
 )
+from app.core.usage.quota import apply_usage_quota
 from app.db.models import AccountStatus
 
 pytestmark = pytest.mark.unit
@@ -27,7 +26,7 @@ def test_select_account_picks_lowest_used_percent():
 
 
 def test_select_account_skips_rate_limited_until_reset():
-    now = time.time()
+    now = 1_700_000_000.0
     states = [
         AccountState("a", AccountStatus.RATE_LIMITED, used_percent=5.0, reset_at=int(now + 60)),
         AccountState("b", AccountStatus.ACTIVE, used_percent=10.0),
@@ -37,24 +36,83 @@ def test_select_account_skips_rate_limited_until_reset():
     assert result.account.account_id == "b"
 
 
-def test_handle_rate_limit_sets_reset_at_from_message():
-    now = time.time()
+def test_handle_rate_limit_sets_reset_at_from_message(monkeypatch):
+    now = 1_700_000_000.0
+    monkeypatch.setattr("app.core.balancer.logic.time.time", lambda: now)
     state = AccountState("a", AccountStatus.ACTIVE, used_percent=5.0)
     handle_rate_limit(state, {"message": "Try again in 1.5s"})
-    assert state.status == AccountStatus.RATE_LIMITED
-    assert state.reset_at is not None
-    delay = state.reset_at - now
-    assert 1.2 <= delay <= 2.0
+    assert state.status == AccountStatus.ACTIVE
+    assert state.cooldown_until is not None
+    assert state.cooldown_until == pytest.approx(now + 1.5)
 
 
-def test_handle_rate_limit_uses_backoff_when_no_delay():
-    now = time.time()
+def test_handle_rate_limit_uses_backoff_when_no_delay(monkeypatch):
+    now = 1_700_000_000.0
+    monkeypatch.setattr("app.core.balancer.logic.time.time", lambda: now)
+    monkeypatch.setattr("app.core.balancer.logic.backoff_seconds", lambda _: 0.2)
     state = AccountState("a", AccountStatus.ACTIVE, used_percent=5.0)
     handle_rate_limit(state, {"message": "Rate limit exceeded."})
-    assert state.status == AccountStatus.RATE_LIMITED
-    assert state.reset_at is not None
-    delay = state.reset_at - now
-    assert 0.15 <= delay <= 0.3
+    assert state.status == AccountStatus.ACTIVE
+    assert state.cooldown_until is not None
+    assert state.cooldown_until == pytest.approx(now + 0.2)
+
+
+def test_select_account_skips_cooldown_until_expired():
+    now = 1_700_000_000.0
+    states = [
+        AccountState("a", AccountStatus.ACTIVE, used_percent=5.0, cooldown_until=now + 60),
+        AccountState("b", AccountStatus.ACTIVE, used_percent=10.0),
+    ]
+    result = select_account(states, now=now)
+    assert result.account is not None
+    assert result.account.account_id == "b"
+
+
+def test_select_account_resets_error_count_when_cooldown_expires():
+    now = 1_700_000_000.0
+    state = AccountState(
+        "a",
+        AccountStatus.ACTIVE,
+        used_percent=5.0,
+        cooldown_until=now - 1,
+        last_error_at=now - 10,
+        error_count=4,
+    )
+    result = select_account([state], now=now)
+    assert result.account is not None
+    assert state.cooldown_until is None
+    assert state.last_error_at is None
+    assert state.error_count == 0
+
+
+def test_select_account_reports_cooldown_wait_time():
+    now = 1_700_000_000.0
+    states = [
+        AccountState("a", AccountStatus.ACTIVE, used_percent=5.0, cooldown_until=now + 30),
+        AccountState("b", AccountStatus.ACTIVE, used_percent=10.0, cooldown_until=now + 60),
+    ]
+    result = select_account(states, now=now)
+    assert result.account is None
+    assert result.error_message is not None
+    assert "Try again in" in result.error_message
+
+
+def test_apply_usage_quota_sets_fallback_reset_for_primary_window(monkeypatch):
+    now = 1_700_000_000.0
+    monkeypatch.setattr("app.core.usage.quota.time.time", lambda: now)
+    status, used_percent, reset_at = apply_usage_quota(
+        status=AccountStatus.ACTIVE,
+        primary_used=100.0,
+        primary_reset=None,
+        primary_window_minutes=1,
+        runtime_reset=None,
+        secondary_used=None,
+        secondary_reset=None,
+    )
+    assert status == AccountStatus.RATE_LIMITED
+    assert used_percent == 100.0
+    assert reset_at is not None
+    assert reset_at == pytest.approx(now + 60.0)
 
 
 def test_handle_quota_exceeded_sets_used_percent():

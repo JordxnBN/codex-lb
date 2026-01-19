@@ -48,12 +48,12 @@ class AccountsRepository:
             .values(status=status, deactivation_reason=deactivation_reason)
         )
         await self._session.commit()
-        return bool(result.rowcount)
+        return bool(getattr(result, "rowcount", 0) or 0)
 
     async def delete(self, account_id: str) -> bool:
         result = await self._session.execute(delete(Account).where(Account.id == account_id))
         await self._session.commit()
-        return bool(result.rowcount)
+        return bool(getattr(result, "rowcount", 0) or 0)
 
     async def update_tokens(
         self,
@@ -77,4 +77,4 @@ class AccountsRepository:
             values["email"] = email
         result = await self._session.execute(update(Account).where(Account.id == account_id).values(**values))
         await self._session.commit()
-        return bool(result.rowcount)
+        return bool(getattr(result, "rowcount", 0) or 0)

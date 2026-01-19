@@ -82,10 +82,11 @@ def extract_id_token_claims(id_token: str) -> IdTokenClaims:
 def claims_from_auth(auth: AuthFile) -> AccountClaims:
     claims = extract_id_token_claims(auth.tokens.id_token)
     auth_claims = claims.auth or OpenAIAuthClaims()
+    plan_type = auth_claims.chatgpt_plan_type or claims.chatgpt_plan_type
     return AccountClaims(
         account_id=auth.tokens.account_id or auth_claims.chatgpt_account_id or claims.chatgpt_account_id,
         email=claims.email,
-        plan_type=auth_claims.chatgpt_plan_type or claims.chatgpt_plan_type,
+        plan_type=plan_type,
     )
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from typing import cast
 
 from app.core import usage as usage_core
 from app.core.auth import (
@@ -12,7 +13,8 @@ from app.core.auth import (
     parse_auth_json,
 )
 from app.core.crypto import TokenEncryptor
-from app.core.usage.logs import cost_from_log
+from app.core.plan_types import coerce_account_plan_type
+from app.core.usage.logs import RequestLogLike, cost_from_log
 from app.core.utils.time import from_epoch_seconds, to_utc_naive, utcnow
 from app.db.models import Account, AccountStatus, UsageHistory
 from app.modules.accounts.repository import AccountsRepository
@@ -23,9 +25,9 @@ from app.modules.accounts.schemas import (
     AccountTokenStatus,
     AccountUsage,
 )
-from app.modules.proxy.usage_updater import UsageUpdater
 from app.modules.request_logs.repository import RequestLogsRepository
 from app.modules.usage.repository import UsageRepository
+from app.modules.usage.updater import UsageUpdater
 
 
 class AccountsService:
@@ -64,7 +66,7 @@ class AccountsService:
         claims = claims_from_auth(auth)
 
         email = claims.email or DEFAULT_EMAIL
-        plan_type = claims.plan_type or DEFAULT_PLAN
+        plan_type = coerce_account_plan_type(claims.plan_type, DEFAULT_PLAN)
         account_id = claims.account_id or fallback_account_id(email)
         last_refresh = to_utc_naive(auth.last_refresh_at) if auth.last_refresh_at else utcnow()
 
@@ -107,6 +109,7 @@ class AccountsService:
         secondary_usage: UsageHistory | None,
         cost_usd_24h: float | None,
     ) -> AccountSummary:
+        plan_type = coerce_account_plan_type(account.plan_type, DEFAULT_PLAN)
         auth_status = self._build_auth_status(account)
         primary_used_percent = _normalize_used_percent(primary_usage) or 0.0
         secondary_used_percent = _normalize_used_percent(secondary_usage) or 0.0
@@ -114,8 +117,8 @@ class AccountsService:
         secondary_remaining_percent = usage_core.remaining_percent_from_used(secondary_used_percent) or 0.0
         reset_at_primary = from_epoch_seconds(primary_usage.reset_at) if primary_usage is not None else None
         reset_at_secondary = from_epoch_seconds(secondary_usage.reset_at) if secondary_usage is not None else None
-        capacity_primary = usage_core.capacity_for_plan(account.plan_type, "primary")
-        capacity_secondary = usage_core.capacity_for_plan(account.plan_type, "secondary")
+        capacity_primary = usage_core.capacity_for_plan(plan_type, "primary")
+        capacity_secondary = usage_core.capacity_for_plan(plan_type, "secondary")
         remaining_credits_primary = usage_core.remaining_credits_from_percent(
             primary_used_percent,
             capacity_primary,
@@ -128,7 +131,7 @@ class AccountsService:
             account_id=account.id,
             email=account.email,
             display_name=account.email,
-            plan_type=account.plan_type,
+            plan_type=plan_type,
             status=account.status.value,
             usage=AccountUsage(
                 primary_remaining_percent=primary_remaining_percent,
@@ -186,7 +189,7 @@ class AccountsService:
         logs = await self._logs_repo.list_since(since)
         totals: dict[str, float] = {}
         for log in logs:
-            cost = cost_from_log(log)
+            cost = cost_from_log(cast(RequestLogLike, log))
             if cost is None:
                 continue
             totals[log.account_id] = totals.get(log.account_id, 0.0) + cost
