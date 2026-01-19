@@ -9,6 +9,13 @@
 * add health response schema and typed context cleanup
 
 
+### Bug Fixes
+
+* normalize stored plan types (pro/team/business/enterprise/edu) so accounts no longer show as unknown
+* prevent rate-limit status when usage is below 100% by using cooldown/backoff and primary-window quota checks
+* surface per-account quota reset times by applying primary/secondary reset windows with fallbacks
+
+
 ### Refactor
 
 * move auth/usage helpers into module boundaries and extract proxy helpers
