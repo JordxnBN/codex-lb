@@ -1008,8 +1008,8 @@ button {
 
 .auth-dialog__actions button.default:hover,
 .message-dialog__actions button.default:hover {
-  background: var(--accent-primary-hover);
-  border-color: var(--accent-primary-hover);
+  background: var(--accent-primary-hover) !important;
+  border-color: var(--accent-primary-hover) !important;
 }
 
 .auth-dialog__code-value {

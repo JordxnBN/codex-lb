@@ -426,7 +426,8 @@
         <button type="button" @click="resetAuthDialogState">Change method</button>
         <button type="button" @click="copyToClipboard(authDialog.userCode, 'User code')"
           :disabled="!authDialog.userCode">Copy code</button>
-        <button type="button" @click="openVerificationUrl" :disabled="!authDialog.verificationUrl">Open link
+        <button type="button" class="default" @click="openVerificationUrl" :disabled="!authDialog.verificationUrl">Open
+          link
         </button>
       </div>
       <div class="auth-dialog__actions-row" x-show="authDialog.stage === 'success'">
