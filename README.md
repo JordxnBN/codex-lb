@@ -3,7 +3,7 @@
 Load balancer for ChatGPT accounts. Pool multiple accounts, track usage, view everything in a dashboard.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Soju06/codex-lb/main/docs/screenshots/dashboard.jpeg" alt="Codex Load Balancer dashboard" width="100%">
+  <img src="docs/screenshots/dashboard.jpg" alt="Codex Load Balancer dashboard" width="100%">
 </p>
 
 ## Quick Start
@@ -27,7 +27,7 @@ Open [localhost:2455](http://localhost:2455) → Add account → Done.
 
 ## Accounts view
 
-![Accounts list and details](https://raw.githubusercontent.com/Soju06/codex-lb/main/docs/screenshots/accounts.jpeg)
+![Accounts list and details](docs/screenshots/accounts.jpg)
 
 ## Codex CLI & Extension Setup
 
