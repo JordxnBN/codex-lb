@@ -41,10 +41,12 @@
       "contributions": [
         "code",
         "bug",
-        "maintenance"
+        "maintenance",
+        "design"
       ]
     }
   ],
   "contributorsPerLine": 7,
-  "linkToUsage": false
+  "linkToUsage": false,
+  "commitType": "docs"
 }
