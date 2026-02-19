@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 
 from app.core.openai.exceptions import ClientPayloadError
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_dict, is_json_list
+
+_SUPPORTED_MESSAGE_ROLES = frozenset({"system", "developer", "user", "assistant", "tool"})
 
 
 def coerce_messages(existing_instructions: str, messages: Sequence[JsonValue]) -> tuple[str, list[JsonValue]]:
@@ -15,11 +18,21 @@ def coerce_messages(existing_instructions: str, messages: Sequence[JsonValue]) -
             raise ClientPayloadError("Each message must be an object.", param="messages")
         role_value = message.get("role")
         role = role_value if isinstance(role_value, str) else None
+        if role is None:
+            raise ClientPayloadError("Each message must include a string 'role'.", param="messages")
+        if role not in _SUPPORTED_MESSAGE_ROLES:
+            raise ClientPayloadError(f"Unsupported message role: {role}", param="messages")
         if role in ("system", "developer"):
             _ensure_text_only_content(message.get("content"), role)
             content_text = _content_to_text(message.get("content"))
             if content_text:
                 instruction_parts.append(content_text)
+            continue
+        if role == "tool":
+            input_messages.append(_normalize_tool_message(message))
+            continue
+        if role == "assistant":
+            input_messages.extend(_normalize_assistant_message_items(message))
             continue
         input_messages.append(_normalize_message_content(message))
     merged = _merge_instructions(existing_instructions, instruction_parts)
@@ -98,6 +111,131 @@ def _normalize_message_content(message: dict[str, JsonValue]) -> dict[str, JsonV
     updated = dict(message)
     updated["content"] = normalized
     return updated
+
+
+def _normalize_tool_message(message: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    tool_call_id = message.get("tool_call_id")
+    tool_call_id_camel = message.get("toolCallId")
+    call_id = message.get("call_id")
+    resolved_call_id = tool_call_id if isinstance(tool_call_id, str) and tool_call_id else None
+    if resolved_call_id is None and isinstance(tool_call_id_camel, str) and tool_call_id_camel:
+        resolved_call_id = tool_call_id_camel
+    if resolved_call_id is None and isinstance(call_id, str) and call_id:
+        resolved_call_id = call_id
+    if not isinstance(resolved_call_id, str) or not resolved_call_id:
+        raise ClientPayloadError("tool messages must include 'tool_call_id'.", param="messages")
+    return {
+        "type": "function_call_output",
+        "call_id": resolved_call_id,
+        "output": _normalize_tool_output_value(message.get("content")),
+    }
+
+
+def _normalize_assistant_message_items(message: dict[str, JsonValue]) -> list[JsonValue]:
+    normalized_items: list[JsonValue] = []
+    normalized_message = _normalize_message_content(message)
+    content = normalized_message.get("content") if is_json_dict(normalized_message) else None
+    if _has_non_empty_content(content):
+        normalized_items.append(normalized_message)
+
+    tool_calls = message.get("tool_calls")
+    if not is_json_list(tool_calls):
+        return normalized_items
+    for index, tool_call in enumerate(tool_calls):
+        if not is_json_dict(tool_call):
+            raise ClientPayloadError(f"assistant tool_calls[{index}] must be an object.", param="messages")
+        normalized_items.append(_normalize_assistant_tool_call(tool_call, index=index))
+    return normalized_items
+
+
+def _normalize_assistant_tool_call(tool_call: dict[str, JsonValue], *, index: int) -> dict[str, JsonValue]:
+    call_id = tool_call.get("id")
+    if not isinstance(call_id, str) or not call_id:
+        raise ClientPayloadError(f"assistant tool_calls[{index}] must include a non-empty 'id'.", param="messages")
+
+    function = tool_call.get("function")
+    if not is_json_dict(function):
+        raise ClientPayloadError(f"assistant tool_calls[{index}] must include a 'function' object.", param="messages")
+    name = function.get("name")
+    if not isinstance(name, str) or not name:
+        raise ClientPayloadError(
+            f"assistant tool_calls[{index}].function must include a non-empty 'name'.",
+            param="messages",
+        )
+
+    raw_arguments = function.get("arguments")
+    arguments = _normalize_tool_call_arguments(raw_arguments)
+
+    return {
+        "type": "function_call",
+        "call_id": call_id,
+        "name": name,
+        "arguments": arguments,
+    }
+
+
+def _normalize_tool_call_arguments(arguments: JsonValue) -> str:
+    if arguments is None:
+        return "{}"
+    if isinstance(arguments, str):
+        return arguments
+    if is_json_dict(arguments) or is_json_list(arguments):
+        return json.dumps(arguments, ensure_ascii=False, separators=(",", ":"))
+    return str(arguments)
+
+
+def _has_non_empty_content(content: JsonValue) -> bool:
+    if content is None:
+        return False
+    if isinstance(content, str):
+        return bool(content.strip())
+    if is_json_list(content):
+        for part in content:
+            if isinstance(part, str):
+                if part.strip():
+                    return True
+                continue
+            if not is_json_dict(part):
+                return True
+            text = part.get("text")
+            if isinstance(text, str) and text.strip():
+                return True
+            if text is None and part:
+                return True
+        return False
+    if is_json_dict(content):
+        text = content.get("text")
+        if isinstance(text, str):
+            return bool(text.strip())
+        return bool(content)
+    return False
+
+
+def _normalize_tool_output_value(content: JsonValue) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if is_json_list(content):
+        parts: list[str] = []
+        for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+                continue
+            if not is_json_dict(part):
+                continue
+            text = part.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+        if parts:
+            return "\n".join([part for part in parts if part])
+        return json.dumps(content, ensure_ascii=False, separators=(",", ":"))
+    if is_json_dict(content):
+        text = content.get("text")
+        if isinstance(text, str):
+            return text
+        return json.dumps(content, ensure_ascii=False, separators=(",", ":"))
+    return str(content)
 
 
 def _normalize_content_parts(content: JsonValue) -> JsonValue:

@@ -16,6 +16,8 @@ from app.core.openai.requests import (
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
 
+_SUPPORTED_CHAT_ROLES = frozenset({"system", "developer", "user", "assistant", "tool"})
+
 
 class ChatCompletionsRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -77,11 +79,17 @@ class ChatCompletionsRequest(BaseModel):
                 raise ValueError("'messages' must contain objects.")
             role = message.get("role")
             role_name = role if isinstance(role, str) else None
+            if role_name is None:
+                raise ValueError("Each message must include a string 'role'.")
+            if role_name not in _SUPPORTED_CHAT_ROLES:
+                raise ValueError(f"Unsupported message role: {role_name}")
             content = message.get("content")
             if role_name in ("system", "developer"):
                 _ensure_text_only_content(content, role_name)
             elif role_name == "user":
                 _validate_user_content(content)
+            elif role_name == "tool":
+                _validate_tool_message(message)
         return self
 
     def to_responses_request(self) -> ResponsesRequest:
@@ -242,7 +250,7 @@ def _text_format_from_parsed(parsed: ChatResponseFormat) -> ResponsesTextFormat:
             raise ValueError("'response_format.json_schema' is required when type is 'json_schema'.")
         return ResponsesTextFormat(
             type=parsed.type,
-            schema_=json_schema.schema_,
+            schema=json_schema.schema_,
             name=json_schema.name,
             strict=json_schema.strict,
         )
@@ -311,6 +319,19 @@ def _validate_user_content(content: JsonValue) -> None:
         raise ValueError(f"Unsupported user content part type: {part_type}")
 
 
+
+def _validate_tool_message(message: Mapping[str, JsonValue]) -> None:
+    tool_call_id = message.get("tool_call_id")
+    tool_call_id_camel = message.get("toolCallId")
+    call_id = message.get("call_id")
+    resolved_call_id = tool_call_id if isinstance(tool_call_id, str) and tool_call_id else None
+    if resolved_call_id is None and isinstance(tool_call_id_camel, str) and tool_call_id_camel:
+        resolved_call_id = tool_call_id_camel
+    if resolved_call_id is None and isinstance(call_id, str) and call_id:
+        resolved_call_id = call_id
+    if not isinstance(resolved_call_id, str) or not resolved_call_id:
+        raise ValueError("tool messages must include 'tool_call_id'.")
+
 def _sanitize_user_messages(messages: list[dict[str, JsonValue]]) -> list[dict[str, JsonValue]]:
     sanitized: list[dict[str, JsonValue]] = []
     for message in messages:
@@ -363,3 +384,6 @@ def _is_oversized_data_url(url: str) -> bool:
     padding = data.count("=")
     size = (len(data) * 3) // 4 - padding
     return size > 8 * 1024 * 1024
+
+
+
