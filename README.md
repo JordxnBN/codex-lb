@@ -117,18 +117,32 @@ codex
 
 ```jsonc
 {
+  "$schema": "https://opencode.ai/config.json",
   "provider": {
-    "openai": {
-      "options": { "baseURL": "http://127.0.0.1:2455/v1" }
+    "codex-lb": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "codex-lb",
+      "options": {
+        "baseURL": "http://127.0.0.1:2455/v1"
+      },
+      "models": {
+        "gpt-5.3-codex": { "name": "GPT-5.3 Codex", "reasoning": true, "interleaved": { "field": "reasoning_details" } }
+      }
     }
-  }
+  },
+  "model": "codex-lb/gpt-5.3-codex"
 }
 ```
+
+This keeps OpenCode's default providers/connections available and adds `codex-lb` as an extra selectable provider.
+
+If you use `enabled_providers`, include every provider you want to keep plus `codex-lb`; otherwise non-listed providers are hidden.
 
 **With API key auth:**
 
 ```jsonc
 {
+  "$schema": "https://opencode.ai/config.json",
   "provider": {
     "codex-lb": {
       "npm": "@ai-sdk/openai-compatible",
@@ -138,7 +152,7 @@ codex
         "apiKey": "{env:CODEX_LB_API_KEY}"   // reads from env var
       },
       "models": {
-        "gpt-5.3-codex": { "name": "GPT-5.3 Codex" }
+        "gpt-5.3-codex": { "name": "GPT-5.3 Codex", "reasoning": true, "interleaved": { "field": "reasoning_details" } }
       }
     }
   },
