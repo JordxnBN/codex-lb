@@ -71,6 +71,7 @@ class ProxyService:
         propagate_http_errors: bool = False,
         api_key: ApiKeyData | None = None,
         api_key_reservation: ApiKeyUsageReservationData | None = None,
+        suppress_text_done_events: bool = False,
     ) -> AsyncIterator[str]:
         _maybe_log_proxy_request_payload("stream", payload, headers)
         _maybe_log_proxy_request_shape("stream", payload, headers)
@@ -81,6 +82,7 @@ class ProxyService:
             propagate_http_errors=propagate_http_errors,
             api_key=api_key,
             api_key_reservation=api_key_reservation,
+            suppress_text_done_events=suppress_text_done_events,
         )
 
     async def compact_responses(
@@ -325,6 +327,7 @@ class ProxyService:
         propagate_http_errors: bool,
         api_key: ApiKeyData | None,
         api_key_reservation: ApiKeyUsageReservationData | None,
+        suppress_text_done_events: bool,
     ) -> AsyncIterator[str]:
         request_id = ensure_request_id()
         settings = await get_settings_cache().get()
@@ -363,6 +366,7 @@ class ProxyService:
                         attempt < max_attempts - 1,
                         api_key=api_key,
                         settlement=settlement,
+                        suppress_text_done_events=suppress_text_done_events,
                     ):
                         yield line
                     settled = await self._settle_stream_api_key_usage(
@@ -392,6 +396,7 @@ class ProxyService:
                             False,
                             api_key=api_key,
                             settlement=settlement,
+                            suppress_text_done_events=suppress_text_done_events,
                         ):
                             yield line
                         settled = await self._settle_stream_api_key_usage(
@@ -478,6 +483,7 @@ class ProxyService:
         *,
         api_key: ApiKeyData | None,
         settlement: _StreamSettlement,
+        suppress_text_done_events: bool,
     ) -> AsyncIterator[str]:
         account_id_value = account.id
         access_token = self._encryptor.decrypt(account.access_token_encrypted)
@@ -527,10 +533,15 @@ class ProxyService:
                 if event.type == "response.incomplete":
                     status = "error"
 
-            if event and event.type in ("response.output_text.delta", "response.refusal.delta"):
+            if (
+                suppress_text_done_events
+                and event
+                and event.type in ("response.output_text.delta", "response.refusal.delta")
+            ):
                 saw_text_delta = True
             if not (
-                saw_text_delta
+                suppress_text_done_events
+                and saw_text_delta
                 and event
                 and event.type in ("response.output_text.done", "response.content_part.done")
             ):
@@ -540,9 +551,16 @@ class ProxyService:
                 event = parse_sse_event(line)
                 if event:
                     event_type = event.type
-                    if event_type in ("response.output_text.delta", "response.refusal.delta"):
+                    if suppress_text_done_events and event_type in (
+                        "response.output_text.delta",
+                        "response.refusal.delta",
+                    ):
                         saw_text_delta = True
-                    if saw_text_delta and event_type in ("response.output_text.done", "response.content_part.done"):
+                    if (
+                        suppress_text_done_events
+                        and saw_text_delta
+                        and event_type in ("response.output_text.done", "response.content_part.done")
+                    ):
                         continue
                     if event_type in ("response.failed", "error"):
                         status = "error"

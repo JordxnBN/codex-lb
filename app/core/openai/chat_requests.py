@@ -250,7 +250,7 @@ def _text_format_from_parsed(parsed: ChatResponseFormat) -> ResponsesTextFormat:
             raise ValueError("'response_format.json_schema' is required when type is 'json_schema'.")
         return ResponsesTextFormat(
             type=parsed.type,
-            schema=json_schema.schema_,
+            schema_=json_schema.schema_,
             name=json_schema.name,
             strict=json_schema.strict,
         )
@@ -319,7 +319,6 @@ def _validate_user_content(content: JsonValue) -> None:
         raise ValueError(f"Unsupported user content part type: {part_type}")
 
 
-
 def _validate_tool_message(message: Mapping[str, JsonValue]) -> None:
     tool_call_id = message.get("tool_call_id")
     tool_call_id_camel = message.get("toolCallId")
@@ -331,6 +330,7 @@ def _validate_tool_message(message: Mapping[str, JsonValue]) -> None:
         resolved_call_id = call_id
     if not isinstance(resolved_call_id, str) or not resolved_call_id:
         raise ValueError("tool messages must include 'tool_call_id'.")
+
 
 def _sanitize_user_messages(messages: list[dict[str, JsonValue]]) -> list[dict[str, JsonValue]]:
     sanitized: list[dict[str, JsonValue]] = []
@@ -384,6 +384,3 @@ def _is_oversized_data_url(url: str) -> bool:
     padding = data.count("=")
     size = (len(data) * 3) // 4 - padding
     return size > 8 * 1024 * 1024
-
-
-

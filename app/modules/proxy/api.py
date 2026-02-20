@@ -115,8 +115,20 @@ async def v1_responses(
         error = _openai_validation_error(exc)
         return JSONResponse(status_code=400, content=error)
     if responses_payload.stream:
-        return await _stream_responses(request, responses_payload, context, api_key)
-    return await _collect_responses(request, responses_payload, context, api_key)
+        return await _stream_responses(
+            request,
+            responses_payload,
+            context,
+            api_key,
+            suppress_text_done_events=True,
+        )
+    return await _collect_responses(
+        request,
+        responses_payload,
+        context,
+        api_key,
+        suppress_text_done_events=True,
+    )
 
 
 @router.get("/models", response_model=ModelListResponse)
@@ -219,6 +231,7 @@ async def v1_chat_completions(
         propagate_http_errors=True,
         api_key=api_key,
         api_key_reservation=reservation,
+        suppress_text_done_events=True,
     )
     try:
         first = await stream.__anext__()
@@ -259,6 +272,8 @@ async def _stream_responses(
     payload: ResponsesRequest,
     context: ProxyContext,
     api_key: ApiKeyData | None,
+    *,
+    suppress_text_done_events: bool = False,
 ) -> Response:
     _validate_model_access(api_key, payload.model)
     reservation = await _enforce_request_limits(api_key, request_model=payload.model)
@@ -271,6 +286,7 @@ async def _stream_responses(
         propagate_http_errors=True,
         api_key=api_key,
         api_key_reservation=reservation,
+        suppress_text_done_events=suppress_text_done_events,
     )
     try:
         first = await stream.__anext__()
@@ -295,6 +311,8 @@ async def _collect_responses(
     payload: ResponsesRequest,
     context: ProxyContext,
     api_key: ApiKeyData | None,
+    *,
+    suppress_text_done_events: bool = False,
 ) -> Response:
     _validate_model_access(api_key, payload.model)
     reservation = await _enforce_request_limits(api_key, request_model=payload.model)
@@ -307,6 +325,7 @@ async def _collect_responses(
         propagate_http_errors=True,
         api_key=api_key,
         api_key_reservation=reservation,
+        suppress_text_done_events=suppress_text_done_events,
     )
     try:
         response_payload = await _collect_responses_payload(stream)
