@@ -224,6 +224,181 @@ async def test_proxy_responses_streams_upstream(async_client, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_v1_responses_stream_preserves_done_text_events(async_client, monkeypatch):
+    email = "done-filter@example.com"
+    raw_account_id = "acc_done_filter"
+    auth_json = _make_auth_json(raw_account_id, email)
+    files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+    response = await async_client.post("/api/accounts/import", files=files)
+    assert response.status_code == 200
+
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
+        yield 'data: {"type":"response.output_text.delta","delta":"Hey there! "}\n\n'
+        yield 'data: {"type":"response.output_text.delta","delta":"What are we tackling?"}\n\n'
+        yield 'data: {"type":"response.output_text.done","text":"Hey there! What are we tackling?"}\n\n'
+        yield (
+            'data: {"type":"response.content_part.done","part":{"type":"output_text",'
+            '"text":"Hey there! What are we tackling?"}}\n\n'
+        )
+        yield 'data: {"type":"response.completed","response":{"id":"resp_1"}}\n\n'
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+
+    payload = {"model": "gpt-5.2", "input": "hi", "stream": True}
+    async with async_client.stream("POST", "/v1/responses", json=payload) as resp:
+        assert resp.status_code == 200
+        lines = [line async for line in resp.aiter_lines() if line]
+
+    event_types: list[str] = []
+    for line in lines:
+        if not line.startswith("data: "):
+            continue
+        data = json.loads(line[6:])
+        event_type = data.get("type")
+        if isinstance(event_type, str):
+            event_types.append(event_type)
+
+    assert "response.output_text.delta" in event_types
+    assert "response.completed" in event_types
+    assert "response.output_text.done" in event_types
+    assert "response.content_part.done" in event_types
+
+
+@pytest.mark.asyncio
+async def test_v1_responses_stream_keeps_non_text_content_part_done_events(async_client, monkeypatch):
+    email = "done-filter-non-text@example.com"
+    raw_account_id = "acc_done_filter_non_text"
+    auth_json = _make_auth_json(raw_account_id, email)
+    files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+    response = await async_client.post("/api/accounts/import", files=files)
+    assert response.status_code == 200
+
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
+        yield 'data: {"type":"response.output_text.delta","delta":"First line"}\n\n'
+        yield (
+            'data: {"type":"response.content_part.done","part":{"type":"output_image",'
+            '"image_url":"https://example.com/a.png"}}\n\n'
+        )
+        yield 'data: {"type":"response.completed","response":{"id":"resp_1"}}\n\n'
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+
+    payload = {"model": "gpt-5.2", "input": "hi", "stream": True}
+    async with async_client.stream("POST", "/v1/responses", json=payload) as resp:
+        assert resp.status_code == 200
+        lines = [line async for line in resp.aiter_lines() if line]
+
+    content_part_events: list[dict[str, object]] = []
+    for line in lines:
+        if not line.startswith("data: "):
+            continue
+        raw_payload = line[6:]
+        if raw_payload == "[DONE]":
+            continue
+        data = json.loads(raw_payload)
+        if data.get("type") == "response.content_part.done":
+            content_part_events.append(data)
+
+    assert content_part_events
+    assert content_part_events[0]["part"] == {"type": "output_image", "image_url": "https://example.com/a.png"}
+
+
+@pytest.mark.asyncio
+async def test_backend_responses_stream_preserves_done_text_events(async_client, monkeypatch):
+    email = "done-preserve@example.com"
+    raw_account_id = "acc_done_preserve"
+    auth_json = _make_auth_json(raw_account_id, email)
+    files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+    response = await async_client.post("/api/accounts/import", files=files)
+    assert response.status_code == 200
+
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
+        yield 'data: {"type":"response.output_text.delta","delta":"Hey there! "}\n\n'
+        yield 'data: {"type":"response.output_text.delta","delta":"What are we tackling?"}\n\n'
+        yield 'data: {"type":"response.output_text.done","text":"Hey there! What are we tackling?"}\n\n'
+        yield (
+            'data: {"type":"response.content_part.done","part":{"type":"output_text",'
+            '"text":"Hey there! What are we tackling?"}}\n\n'
+        )
+        yield 'data: {"type":"response.completed","response":{"id":"resp_1"}}\n\n'
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+
+    payload = {"model": "gpt-5.2", "instructions": "hi", "input": [], "stream": True}
+    async with async_client.stream("POST", "/backend-api/codex/responses", json=payload) as resp:
+        assert resp.status_code == 200
+        lines = [line async for line in resp.aiter_lines() if line]
+
+    event_types: list[str] = []
+    for line in lines:
+        if not line.startswith("data: "):
+            continue
+        raw_payload = line[6:]
+        if raw_payload == "[DONE]":
+            continue
+        data = json.loads(raw_payload)
+        event_type = data.get("type")
+        if isinstance(event_type, str):
+            event_types.append(event_type)
+
+    assert "response.output_text.delta" in event_types
+    assert "response.output_text.done" in event_types
+    assert "response.content_part.done" in event_types
+    assert "response.completed" in event_types
+
+
+@pytest.mark.asyncio
+async def test_v1_responses_sanitizes_interleaved_reasoning_fields(async_client, monkeypatch):
+    email = "reasoning-sanitize@example.com"
+    raw_account_id = "acc_reasoning_sanitize"
+    auth_json = _make_auth_json(raw_account_id, email)
+    files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+    response = await async_client.post("/api/accounts/import", files=files)
+    assert response.status_code == 200
+
+    seen_input: dict[str, object] = {}
+
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
+        seen_input["input"] = payload.input
+        yield 'data: {"type":"response.completed","response":{"id":"resp_reasoning_sanitize"}}\n\n'
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+
+    payload = {
+        "model": "gpt-5.1",
+        "input": [
+            {
+                "role": "user",
+                "reasoning_content": "drop",
+                "tool_calls": [{"id": "call_1", "type": "function"}],
+                "function_call": {"name": "noop", "arguments": "{}"},
+                "content": [
+                    {"type": "input_text", "text": "hello"},
+                    {"type": "reasoning", "reasoning_details": {"tokens": 4}},
+                    {"type": "input_text", "text": "world", "reasoning_content": "drop"},
+                ],
+            }
+        ],
+        "stream": True,
+    }
+    async with async_client.stream("POST", "/v1/responses", json=payload) as resp:
+        assert resp.status_code == 200
+        lines = [line async for line in resp.aiter_lines() if line]
+
+    event = _extract_first_event(lines)
+    assert event["type"] == "response.completed"
+    assert seen_input["input"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "input_text", "text": "hello"},
+                {"type": "input_text", "text": "world"},
+            ],
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_proxy_responses_forces_stream(async_client, monkeypatch):
     email = "stream-force@example.com"
     raw_account_id = "acc_stream_force"
@@ -472,3 +647,100 @@ async def test_v1_responses_compact_invalid_messages_returns_openai_400(async_cl
     assert body["error"]["type"] == "invalid_request_error"
     assert body["error"]["code"] == "invalid_request_error"
     assert body["error"]["param"] == "messages"
+
+
+@pytest.mark.asyncio
+async def test_v1_chat_completions_invalid_tool_calls_returns_openai_400(async_client):
+    payload = {
+        "model": "gpt-5.2",
+        "messages": [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "call_1", "type": "function", "function": {"arguments": "{}"}}],
+            },
+            {"role": "user", "content": "continue"},
+        ],
+    }
+    resp = await async_client.post("/v1/chat/completions", json=payload)
+
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["error"]["type"] == "invalid_request_error"
+    assert body["error"]["code"] == "invalid_request_error"
+
+
+@pytest.mark.asyncio
+async def test_v1_responses_normalizes_assistant_input_text(async_client, monkeypatch):
+    email = "assistant-normalize@example.com"
+    raw_account_id = "acc_assistant_normalize"
+    auth_json = _make_auth_json(raw_account_id, email)
+    files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+    response = await async_client.post("/api/accounts/import", files=files)
+    assert response.status_code == 200
+
+    seen_input: dict[str, object] = {}
+
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
+        seen_input["input"] = payload.input
+        yield 'data: {"type":"response.completed","response":{"id":"resp_assistant_normalize"}}\n\n'
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+
+    payload = {
+        "model": "gpt-5.1",
+        "input": [
+            {"role": "assistant", "content": [{"type": "input_text", "text": "Prior answer"}]},
+            {"role": "user", "content": [{"type": "input_text", "text": "Continue"}]},
+        ],
+        "stream": True,
+    }
+    async with async_client.stream("POST", "/v1/responses", json=payload) as resp:
+        assert resp.status_code == 200
+        lines = [line async for line in resp.aiter_lines() if line]
+
+    event = _extract_first_event(lines)
+    assert event["type"] == "response.completed"
+    assert seen_input["input"] == [
+        {"role": "assistant", "content": [{"type": "output_text", "text": "Prior answer"}]},
+        {"role": "user", "content": [{"type": "input_text", "text": "Continue"}]},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_v1_responses_normalizes_tool_messages(async_client, monkeypatch):
+    email = "tool-normalize@example.com"
+    raw_account_id = "acc_tool_normalize"
+    auth_json = _make_auth_json(raw_account_id, email)
+    files = {"auth_json": ("auth.json", json.dumps(auth_json), "application/json")}
+    response = await async_client.post("/api/accounts/import", files=files)
+    assert response.status_code == 200
+
+    seen_input: dict[str, object] = {}
+
+    async def fake_stream(payload, headers, access_token, account_id, base_url=None, raise_for_status=False):
+        seen_input["input"] = payload.input
+        yield 'data: {"type":"response.completed","response":{"id":"resp_tool_normalize"}}\n\n'
+
+    monkeypatch.setattr(proxy_module, "core_stream_responses", fake_stream)
+
+    payload = {
+        "model": "gpt-5.1",
+        "messages": [
+            {"role": "assistant", "content": "Running tool."},
+            {"role": "tool", "tool_call_id": "call_1", "content": '{"ok":true}'},
+            {"role": "user", "content": "continue"},
+        ],
+        "stream": True,
+    }
+    async with async_client.stream("POST", "/v1/responses", json=payload) as resp:
+        assert resp.status_code == 200
+        lines = [line async for line in resp.aiter_lines() if line]
+
+    event = _extract_first_event(lines)
+    assert event["type"] == "response.completed"
+    assert seen_input["input"] == [
+        {"role": "assistant", "content": [{"type": "output_text", "text": "Running tool."}]},
+        {"type": "function_call_output", "call_id": "call_1", "output": '{"ok":true}'},
+        {"role": "user", "content": [{"type": "input_text", "text": "continue"}]},
+    ]

@@ -15,6 +15,8 @@ from app.core.openai.requests import (
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_list, is_json_mapping
 
+_SUPPORTED_CHAT_ROLES = frozenset({"system", "developer", "user", "assistant", "tool"})
+
 
 class ChatCompletionsRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -76,11 +78,19 @@ class ChatCompletionsRequest(BaseModel):
                 raise ValueError("'messages' must contain objects.")
             role = message.get("role")
             role_name = role if isinstance(role, str) else None
+            if role_name is None:
+                raise ValueError("Each message must include a string 'role'.")
+            if role_name not in _SUPPORTED_CHAT_ROLES:
+                raise ValueError(f"Unsupported message role: {role_name}")
             content = message.get("content")
             if role_name in ("system", "developer"):
                 _ensure_text_only_content(content, role_name)
             elif role_name == "user":
                 _validate_user_content(content)
+            elif role_name == "assistant":
+                _validate_assistant_tool_calls(message)
+            elif role_name == "tool":
+                _validate_tool_message(message)
         return self
 
     def to_responses_request(self) -> ResponsesRequest:
@@ -300,6 +310,39 @@ def _validate_user_content(content: JsonValue) -> None:
                 raise ValueError("File content parts must include file metadata.")
             continue
         raise ValueError(f"Unsupported user content part type: {part_type}")
+
+
+def _validate_tool_message(message: Mapping[str, JsonValue]) -> None:
+    tool_call_id = message.get("tool_call_id")
+    tool_call_id_camel = message.get("toolCallId")
+    call_id = message.get("call_id")
+    resolved_call_id = tool_call_id if isinstance(tool_call_id, str) and tool_call_id else None
+    if resolved_call_id is None and isinstance(tool_call_id_camel, str) and tool_call_id_camel:
+        resolved_call_id = tool_call_id_camel
+    if resolved_call_id is None and isinstance(call_id, str) and call_id:
+        resolved_call_id = call_id
+    if not isinstance(resolved_call_id, str) or not resolved_call_id:
+        raise ValueError("tool messages must include 'tool_call_id'.")
+
+
+def _validate_assistant_tool_calls(message: Mapping[str, JsonValue]) -> None:
+    tool_calls = message.get("tool_calls")
+    if tool_calls is None:
+        return
+    if not is_json_list(tool_calls):
+        raise ValueError("assistant message 'tool_calls' must be an array.")
+    for index, tool_call in enumerate(tool_calls):
+        if not is_json_mapping(tool_call):
+            raise ValueError(f"assistant tool_calls[{index}] must be an object.")
+        call_id = tool_call.get("id")
+        if not isinstance(call_id, str) or not call_id:
+            raise ValueError(f"assistant tool_calls[{index}] must include a non-empty 'id'.")
+        function = tool_call.get("function")
+        if not is_json_mapping(function):
+            raise ValueError(f"assistant tool_calls[{index}] must include a 'function' object.")
+        name = function.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError(f"assistant tool_calls[{index}].function must include a non-empty 'name'.")
 
 
 def _sanitize_user_messages(messages: list[dict[str, JsonValue]]) -> list[dict[str, JsonValue]]:

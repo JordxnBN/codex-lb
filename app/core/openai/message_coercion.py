@@ -6,6 +6,8 @@ from app.core.openai.exceptions import ClientPayloadError
 from app.core.types import JsonValue
 from app.core.utils.json_guards import is_json_dict, is_json_list
 
+_SUPPORTED_MESSAGE_ROLES = frozenset({"system", "developer", "user", "assistant", "tool"})
+
 
 def coerce_messages(existing_instructions: str, messages: Sequence[JsonValue]) -> tuple[str, list[JsonValue]]:
     instruction_parts: list[str] = []
@@ -15,11 +17,18 @@ def coerce_messages(existing_instructions: str, messages: Sequence[JsonValue]) -
             raise ClientPayloadError("Each message must be an object.", param="messages")
         role_value = message.get("role")
         role = role_value if isinstance(role_value, str) else None
+        if role is None:
+            raise ClientPayloadError("Each message must include a string 'role'.", param="messages")
+        if role not in _SUPPORTED_MESSAGE_ROLES:
+            raise ClientPayloadError(f"Unsupported message role: {role}", param="messages")
         if role in ("system", "developer"):
             _ensure_text_only_content(message.get("content"), role)
             content_text = _content_to_text(message.get("content"))
             if content_text:
                 instruction_parts.append(content_text)
+            continue
+        if role == "tool":
+            input_messages.append(_convert_tool_message(message))
             continue
         if role == "assistant":
             tool_calls = message.get("tool_calls")
@@ -27,9 +36,6 @@ def coerce_messages(existing_instructions: str, messages: Sequence[JsonValue]) -
                 input_messages.extend(_decompose_assistant_tool_calls(message))
             else:
                 input_messages.append(_normalize_message_content(message))
-            continue
-        if role == "tool":
-            input_messages.append(_convert_tool_message(message))
             continue
         input_messages.append(_normalize_message_content(message))
     merged = _merge_instructions(existing_instructions, instruction_parts)
@@ -140,8 +146,15 @@ def _decompose_assistant_tool_calls(message: dict[str, JsonValue]) -> list[JsonV
 
 
 def _convert_tool_message(message: dict[str, JsonValue]) -> dict[str, JsonValue]:
-    call_id = message.get("tool_call_id")
-    if not isinstance(call_id, str) or not call_id:
+    tool_call_id = message.get("tool_call_id")
+    tool_call_id_camel = message.get("toolCallId")
+    call_id = message.get("call_id")
+    resolved_call_id = tool_call_id if isinstance(tool_call_id, str) and tool_call_id else None
+    if resolved_call_id is None and isinstance(tool_call_id_camel, str) and tool_call_id_camel:
+        resolved_call_id = tool_call_id_camel
+    if resolved_call_id is None and isinstance(call_id, str) and call_id:
+        resolved_call_id = call_id
+    if not isinstance(resolved_call_id, str) or not resolved_call_id:
         raise ClientPayloadError("tool messages must include 'tool_call_id'.", param="messages")
     content = message.get("content")
     if isinstance(content, str):
@@ -160,7 +173,7 @@ def _convert_tool_message(message: dict[str, JsonValue]) -> dict[str, JsonValue]
             "tool message content must be a string or array.",
             param="messages",
         )
-    return {"type": "function_call_output", "call_id": call_id, "output": output}
+    return {"type": "function_call_output", "call_id": resolved_call_id, "output": output}
 
 
 def _concat_text_parts(content: list[JsonValue]) -> str:

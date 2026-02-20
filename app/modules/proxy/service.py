@@ -21,13 +21,13 @@ from app.core.config.settings import get_settings
 from app.core.config.settings_cache import get_settings_cache
 from app.core.crypto import TokenEncryptor
 from app.core.errors import openai_error, response_failed_event
-from app.core.openai.models import OpenAIResponsePayload
+from app.core.openai.models import OpenAIEvent, OpenAIResponsePayload
 from app.core.openai.parsing import parse_sse_event
 from app.core.openai.requests import ResponsesCompactRequest, ResponsesRequest
 from app.core.types import JsonValue
 from app.core.usage.types import UsageWindowRow
 from app.core.utils.request_id import ensure_request_id, get_request_id
-from app.core.utils.sse import format_sse_event
+from app.core.utils.sse import format_sse_event, parse_sse_data_json
 from app.db.models import Account, UsageHistory
 from app.modules.accounts.auth_manager import AuthManager
 from app.modules.api_keys.service import ApiKeyData, ApiKeysService, ApiKeyUsageReservationData
@@ -54,6 +54,9 @@ from app.modules.usage.updater import UsageUpdater
 
 logger = logging.getLogger(__name__)
 
+_TEXT_DELTA_EVENT_TYPES = frozenset({"response.output_text.delta", "response.refusal.delta"})
+_TEXT_DONE_CONTENT_PART_TYPES = frozenset({"output_text", "refusal"})
+
 
 class ProxyService:
     def __init__(self, repo_factory: ProxyRepoFactory) -> None:
@@ -69,6 +72,7 @@ class ProxyService:
         propagate_http_errors: bool = False,
         api_key: ApiKeyData | None = None,
         api_key_reservation: ApiKeyUsageReservationData | None = None,
+        suppress_text_done_events: bool = False,
     ) -> AsyncIterator[str]:
         _maybe_log_proxy_request_payload("stream", payload, headers)
         _maybe_log_proxy_request_shape("stream", payload, headers)
@@ -79,6 +83,7 @@ class ProxyService:
             propagate_http_errors=propagate_http_errors,
             api_key=api_key,
             api_key_reservation=api_key_reservation,
+            suppress_text_done_events=suppress_text_done_events,
         )
 
     async def compact_responses(
@@ -213,6 +218,7 @@ class ProxyService:
         reservation_id = api_key_reservation.reservation_id
         model_name = api_key_reservation.model or settlement.model or ""
 
+        settled: bool = False
         with anyio.CancelScope(shield=True):
             try:
                 async with self._repo_factory() as repos:
@@ -231,7 +237,7 @@ class ProxyService:
                         )
                     else:
                         await api_keys_service.release_usage_reservation(reservation_id)
-                return True
+                settled = True
             except Exception:
                 logger.warning(
                     "Failed to settle stream API key reservation key_id=%s request_id=%s",
@@ -239,7 +245,9 @@ class ProxyService:
                     request_id,
                     exc_info=True,
                 )
-                return False
+                settled = False
+
+        return settled
 
     async def rate_limit_headers(self) -> dict[str, str]:
         return await get_rate_limit_headers_cache().get(self._compute_rate_limit_headers)
@@ -308,6 +316,7 @@ class ProxyService:
         propagate_http_errors: bool,
         api_key: ApiKeyData | None,
         api_key_reservation: ApiKeyUsageReservationData | None,
+        suppress_text_done_events: bool,
     ) -> AsyncIterator[str]:
         request_id = ensure_request_id()
         settings = await get_settings_cache().get()
@@ -346,6 +355,7 @@ class ProxyService:
                         attempt < max_attempts - 1,
                         api_key=api_key,
                         settlement=settlement,
+                        suppress_text_done_events=suppress_text_done_events,
                     ):
                         yield line
                     settled = await self._settle_stream_api_key_usage(
@@ -375,6 +385,7 @@ class ProxyService:
                             False,
                             api_key=api_key,
                             settlement=settlement,
+                            suppress_text_done_events=suppress_text_done_events,
                         ):
                             yield line
                         settled = await self._settle_stream_api_key_usage(
@@ -461,6 +472,7 @@ class ProxyService:
         *,
         api_key: ApiKeyData | None,
         settlement: _StreamSettlement,
+        suppress_text_done_events: bool,
     ) -> AsyncIterator[str]:
         account_id_value = account.id
         access_token = self._encryptor.decrypt(account.access_token_encrypted)
@@ -472,6 +484,7 @@ class ProxyService:
         error_code = None
         error_message = None
         usage = None
+        saw_text_delta = False
 
         try:
             stream = core_stream_responses(
@@ -486,7 +499,9 @@ class ProxyService:
                 first = await iterator.__anext__()
             except StopAsyncIteration:
                 return
+            first_payload = parse_sse_data_json(first)
             event = parse_sse_event(first)
+            event_type = _event_type_from_payload(event, first_payload)
             if event and event.type in ("response.failed", "error"):
                 if event.type == "response.failed":
                     response = event.response
@@ -508,12 +523,31 @@ class ProxyService:
                 usage = event.response.usage if event.response else None
                 if event.type == "response.incomplete":
                     status = "error"
-            yield first
+
+            if suppress_text_done_events and event_type in _TEXT_DELTA_EVENT_TYPES:
+                saw_text_delta = True
+            if not _should_suppress_text_done_event(
+                event_type=event_type,
+                payload=first_payload,
+                suppress_text_done_events=suppress_text_done_events,
+                saw_text_delta=saw_text_delta,
+            ):
+                yield first
 
             async for line in iterator:
+                event_payload = parse_sse_data_json(line)
                 event = parse_sse_event(line)
+                event_type = _event_type_from_payload(event, event_payload)
+                if suppress_text_done_events and event_type in _TEXT_DELTA_EVENT_TYPES:
+                    saw_text_delta = True
+                if _should_suppress_text_done_event(
+                    event_type=event_type,
+                    payload=event_payload,
+                    suppress_text_done_events=suppress_text_done_events,
+                    saw_text_delta=saw_text_delta,
+                ):
+                    continue
                 if event:
-                    event_type = event.type
                     if event_type in ("response.failed", "error"):
                         status = "error"
                         if event_type == "response.failed":
@@ -659,6 +693,43 @@ class _StreamSettlement:
     input_tokens: int | None = None
     output_tokens: int | None = None
     cached_input_tokens: int | None = None
+
+
+def _event_type_from_payload(event: OpenAIEvent | None, payload: dict[str, JsonValue] | None) -> str | None:
+    if event is not None:
+        return event.type
+    if payload is None:
+        return None
+    payload_type = payload.get("type")
+    if isinstance(payload_type, str):
+        return payload_type
+    return None
+
+
+def _should_suppress_text_done_event(
+    *,
+    event_type: str | None,
+    payload: dict[str, JsonValue] | None,
+    suppress_text_done_events: bool,
+    saw_text_delta: bool,
+) -> bool:
+    if not suppress_text_done_events or not saw_text_delta or event_type is None:
+        return False
+    if event_type == "response.output_text.done":
+        return True
+    if event_type == "response.content_part.done":
+        return _is_text_content_part(payload)
+    return False
+
+
+def _is_text_content_part(payload: dict[str, JsonValue] | None) -> bool:
+    if payload is None:
+        return False
+    part = payload.get("part")
+    if not isinstance(part, dict):
+        return False
+    part_type = part.get("type")
+    return isinstance(part_type, str) and part_type in _TEXT_DONE_CONTENT_PART_TYPES
 
 
 def _maybe_log_proxy_request_shape(
