@@ -45,6 +45,10 @@ def upgrade() -> None:
         "prefer_earlier_reset_accounts": False,
     }
 
+    if "import_without_overwrite" in columns:
+        insert_columns.append("import_without_overwrite")
+        params["import_without_overwrite"] = False
+
     if "totp_required_on_login" in columns:
         insert_columns.append("totp_required_on_login")
         params["totp_required_on_login"] = False

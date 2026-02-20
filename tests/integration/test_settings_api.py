@@ -12,6 +12,7 @@ async def test_settings_api_get_and_update(async_client):
     payload = response.json()
     assert payload["stickyThreadsEnabled"] is False
     assert payload["preferEarlierResetAccounts"] is False
+    assert payload["importWithoutOverwrite"] is False
     assert payload["totpRequiredOnLogin"] is False
     assert payload["totpConfigured"] is False
     assert payload["apiKeyAuthEnabled"] is False
@@ -21,6 +22,7 @@ async def test_settings_api_get_and_update(async_client):
         json={
             "stickyThreadsEnabled": True,
             "preferEarlierResetAccounts": True,
+            "importWithoutOverwrite": True,
             "totpRequiredOnLogin": False,
             "apiKeyAuthEnabled": True,
         },
@@ -29,6 +31,7 @@ async def test_settings_api_get_and_update(async_client):
     updated = response.json()
     assert updated["stickyThreadsEnabled"] is True
     assert updated["preferEarlierResetAccounts"] is True
+    assert updated["importWithoutOverwrite"] is True
     assert updated["totpRequiredOnLogin"] is False
     assert updated["totpConfigured"] is False
     assert updated["apiKeyAuthEnabled"] is True
@@ -38,6 +41,7 @@ async def test_settings_api_get_and_update(async_client):
     payload = response.json()
     assert payload["stickyThreadsEnabled"] is True
     assert payload["preferEarlierResetAccounts"] is True
+    assert payload["importWithoutOverwrite"] is True
     assert payload["totpRequiredOnLogin"] is False
     assert payload["totpConfigured"] is False
     assert payload["apiKeyAuthEnabled"] is True

@@ -3,8 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, File, UploadFile
 
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
-from app.core.exceptions import DashboardBadRequestError, DashboardNotFoundError
+from app.core.exceptions import DashboardBadRequestError, DashboardConflictError, DashboardNotFoundError
 from app.dependencies import AccountsContext, get_accounts_context
+from app.modules.accounts.repository import AccountIdentityConflictError
 from app.modules.accounts.schemas import (
     AccountDeleteResponse,
     AccountImportResponse,
@@ -13,6 +14,7 @@ from app.modules.accounts.schemas import (
     AccountsResponse,
     AccountTrendsResponse,
 )
+from app.modules.accounts.service import InvalidAuthJsonError
 
 router = APIRouter(
     prefix="/api/accounts",
@@ -48,8 +50,10 @@ async def import_account(
     raw = await auth_json.read()
     try:
         return await context.service.import_account(raw)
-    except Exception as exc:
+    except InvalidAuthJsonError as exc:
         raise DashboardBadRequestError("Invalid auth.json payload", code="invalid_auth_json") from exc
+    except AccountIdentityConflictError as exc:
+        raise DashboardConflictError(str(exc), code="duplicate_identity_conflict") from exc
 
 
 @router.post("/{account_id}/reactivate", response_model=AccountReactivateResponse)
