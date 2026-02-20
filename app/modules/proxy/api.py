@@ -115,20 +115,8 @@ async def v1_responses(
         error = _openai_validation_error(exc)
         return JSONResponse(status_code=400, content=error)
     if responses_payload.stream:
-        return await _stream_responses(
-            request,
-            responses_payload,
-            context,
-            api_key,
-            suppress_text_done_events=True,
-        )
-    return await _collect_responses(
-        request,
-        responses_payload,
-        context,
-        api_key,
-        suppress_text_done_events=True,
-    )
+        return await _stream_responses(request, responses_payload, context, api_key)
+    return await _collect_responses(request, responses_payload, context, api_key)
 
 
 @router.get("/models", response_model=ModelListResponse)

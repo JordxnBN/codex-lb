@@ -224,7 +224,7 @@ async def test_proxy_responses_streams_upstream(async_client, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_v1_responses_stream_filters_done_text_events(async_client, monkeypatch):
+async def test_v1_responses_stream_preserves_done_text_events(async_client, monkeypatch):
     email = "done-filter@example.com"
     raw_account_id = "acc_done_filter"
     auth_json = _make_auth_json(raw_account_id, email)
@@ -260,8 +260,8 @@ async def test_v1_responses_stream_filters_done_text_events(async_client, monkey
 
     assert "response.output_text.delta" in event_types
     assert "response.completed" in event_types
-    assert "response.output_text.done" not in event_types
-    assert "response.content_part.done" not in event_types
+    assert "response.output_text.done" in event_types
+    assert "response.content_part.done" in event_types
 
 
 @pytest.mark.asyncio
