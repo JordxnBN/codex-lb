@@ -143,6 +143,29 @@ def test_interleaved_reasoning_sanitization_preserves_top_level_reasoning():
     assert dumped["input"] == [{"role": "user", "content": [{"type": "input_text", "text": "hello"}]}]
 
 
+def test_interleaved_reasoning_sanitization_preserves_nested_function_call_arguments():
+    payload = {
+        "model": "gpt-5.1",
+        "instructions": "hi",
+        "input": [
+            {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "lookup",
+                "arguments": {
+                    "tool_calls": [{"id": "nested_1"}],
+                    "function_call": {"name": "nested_fn"},
+                    "reasoning_details": {"tokens": 3},
+                },
+            }
+        ],
+    }
+    request = ResponsesRequest.model_validate(payload)
+
+    dumped = request.to_payload()
+    assert dumped["input"] == payload["input"]
+
+
 def test_responses_accepts_string_input():
     payload = {"model": "gpt-5.1", "instructions": "hi", "input": "hello"}
     request = ResponsesRequest.model_validate(payload)
@@ -347,13 +370,13 @@ def test_responses_normalizes_tool_role_input_item_to_function_call_output():
             {
                 "role": "tool",
                 "tool_call_id": "call_1",
-                "content": [{"type": "input_text", "text": "{\"ok\":true}"}],
+                "content": [{"type": "input_text", "text": '{"ok":true}'}],
             }
         ],
     }
     request = ResponsesRequest.model_validate(payload)
 
-    assert request.input == [{"type": "function_call_output", "call_id": "call_1", "output": "{\"ok\":true}"}]
+    assert request.input == [{"type": "function_call_output", "call_id": "call_1", "output": '{"ok":true}'}]
 
 
 def test_responses_normalizes_tool_role_input_item_with_camel_call_id():
@@ -364,13 +387,13 @@ def test_responses_normalizes_tool_role_input_item_with_camel_call_id():
             {
                 "role": "tool",
                 "toolCallId": "call_1",
-                "content": [{"type": "input_text", "text": "{\"ok\":true}"}],
+                "content": [{"type": "input_text", "text": '{"ok":true}'}],
             }
         ],
     }
     request = ResponsesRequest.model_validate(payload)
 
-    assert request.input == [{"type": "function_call_output", "call_id": "call_1", "output": "{\"ok\":true}"}]
+    assert request.input == [{"type": "function_call_output", "call_id": "call_1", "output": '{"ok":true}'}]
 
 
 def test_v1_tool_messages_normalize_to_function_call_output():
@@ -378,7 +401,7 @@ def test_v1_tool_messages_normalize_to_function_call_output():
         "model": "gpt-5.1",
         "messages": [
             {"role": "assistant", "content": "Running tool."},
-            {"role": "tool", "tool_call_id": "call_1", "content": "{\"ok\":true}"},
+            {"role": "tool", "tool_call_id": "call_1", "content": '{"ok":true}'},
             {"role": "user", "content": "Continue"},
         ],
     }
@@ -386,7 +409,7 @@ def test_v1_tool_messages_normalize_to_function_call_output():
 
     assert request.input == [
         {"role": "assistant", "content": [{"type": "output_text", "text": "Running tool."}]},
-        {"type": "function_call_output", "call_id": "call_1", "output": "{\"ok\":true}"},
+        {"type": "function_call_output", "call_id": "call_1", "output": '{"ok":true}'},
         {"role": "user", "content": [{"type": "input_text", "text": "Continue"}]},
     ]
 
@@ -402,11 +425,11 @@ def test_v1_assistant_tool_calls_normalize_to_function_call():
                     {
                         "id": "call_1",
                         "type": "function",
-                        "function": {"name": "lookup", "arguments": "{\"q\":\"abc\"}"},
+                        "function": {"name": "lookup", "arguments": '{"q":"abc"}'},
                     }
                 ],
             },
-            {"role": "tool", "tool_call_id": "call_1", "content": "{\"ok\":true}"},
+            {"role": "tool", "tool_call_id": "call_1", "content": '{"ok":true}'},
             {"role": "user", "content": "Continue"},
         ],
     }
@@ -424,14 +447,14 @@ def test_v1_tool_message_accepts_tool_call_id_camel_case():
     payload = {
         "model": "gpt-5.1",
         "messages": [
-            {"role": "tool", "toolCallId": "call_1", "content": "{\"ok\":true}"},
+            {"role": "tool", "toolCallId": "call_1", "content": '{"ok":true}'},
             {"role": "user", "content": "Continue"},
         ],
     }
     request = V1ResponsesRequest.model_validate(payload).to_responses_request()
 
     assert request.input == [
-        {"type": "function_call_output", "call_id": "call_1", "output": "{\"ok\":true}"},
+        {"type": "function_call_output", "call_id": "call_1", "output": '{"ok":true}'},
         {"role": "user", "content": [{"type": "input_text", "text": "Continue"}]},
     ]
 
@@ -440,7 +463,7 @@ def test_v1_tool_message_requires_tool_call_id():
     payload = {
         "model": "gpt-5.1",
         "messages": [
-            {"role": "tool", "content": "{\"ok\":true}"},
+            {"role": "tool", "content": '{"ok":true}'},
             {"role": "user", "content": "Continue"},
         ],
     }
