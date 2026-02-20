@@ -103,11 +103,57 @@ def _is_input_file_with_id(item: Mapping[str, JsonValue]) -> bool:
 def _sanitize_input_items(input_items: list[JsonValue]) -> list[JsonValue]:
     sanitized_input: list[JsonValue] = []
     for item in input_items:
-        sanitized_item = _sanitize_interleaved_reasoning_value(item)
+        sanitized_item = _sanitize_interleaved_reasoning_input_item(item)
         if sanitized_item is None:
             continue
         sanitized_input.append(_normalize_role_input_item(sanitized_item))
     return sanitized_input
+
+
+def _sanitize_interleaved_reasoning_input_item(item: JsonValue) -> JsonValue | None:
+    if not is_json_mapping(item):
+        return item
+
+    sanitized_item: dict[str, JsonValue] = {}
+    for key, value in item.items():
+        if key in _INTERLEAVED_REASONING_KEYS:
+            continue
+        if key == "content":
+            sanitized_content = _sanitize_interleaved_reasoning_content(value)
+            if sanitized_content is None:
+                continue
+            sanitized_item[key] = sanitized_content
+            continue
+        sanitized_item[key] = value
+    return sanitized_item
+
+
+def _sanitize_interleaved_reasoning_content(content: JsonValue) -> JsonValue | None:
+    if is_json_list(content):
+        sanitized_parts: list[JsonValue] = []
+        for part in content:
+            sanitized_part = _sanitize_interleaved_reasoning_content_part(part)
+            if sanitized_part is None:
+                continue
+            sanitized_parts.append(sanitized_part)
+        return sanitized_parts
+    if is_json_mapping(content):
+        return _sanitize_interleaved_reasoning_content_part(content)
+    return content
+
+
+def _sanitize_interleaved_reasoning_content_part(part: JsonValue) -> JsonValue | None:
+    if not is_json_mapping(part):
+        return part
+
+    part_type = part.get("type")
+    if isinstance(part_type, str) and part_type in _INTERLEAVED_REASONING_PART_TYPES:
+        return None
+
+    sanitized_part = dict(part)
+    for key in _INTERLEAVED_REASONING_KEYS:
+        sanitized_part.pop(key, None)
+    return sanitized_part
 
 
 def _normalize_role_input_item(value: JsonValue) -> JsonValue:
@@ -354,45 +400,7 @@ def _sanitize_interleaved_reasoning_input(payload: dict[str, JsonValue]) -> None
     input_value = payload.get("input")
     if not is_json_list(input_value):
         return
-
-    sanitized_input: list[JsonValue] = []
-    for item in input_value:
-        sanitized_item = _sanitize_interleaved_reasoning_value(item)
-        if sanitized_item is None:
-            continue
-        sanitized_input.append(_normalize_role_input_item(sanitized_item))
-    payload["input"] = sanitized_input
-
-
-def _sanitize_interleaved_reasoning_value(value: JsonValue) -> JsonValue | None:
-    if is_json_mapping(value):
-        part_type = value.get("type")
-        if isinstance(part_type, str) and part_type in _INTERLEAVED_REASONING_PART_TYPES:
-            return None
-
-        sanitized: dict[str, JsonValue] = {}
-        for key, nested in value.items():
-            if key in _INTERLEAVED_REASONING_KEYS:
-                continue
-            if is_json_mapping(nested) or is_json_list(nested):
-                sanitized_nested = _sanitize_interleaved_reasoning_value(nested)
-                if sanitized_nested is None:
-                    continue
-                sanitized[key] = sanitized_nested
-                continue
-            sanitized[key] = nested
-        return sanitized
-
-    if is_json_list(value):
-        sanitized_list: list[JsonValue] = []
-        for item in value:
-            sanitized_item = _sanitize_interleaved_reasoning_value(item)
-            if sanitized_item is None:
-                continue
-            sanitized_list.append(sanitized_item)
-        return sanitized_list
-
-    return value
+    payload["input"] = _sanitize_input_items(input_value)
 
 
 def _normalize_openai_compatible_aliases(payload: dict[str, JsonValue]) -> None:
