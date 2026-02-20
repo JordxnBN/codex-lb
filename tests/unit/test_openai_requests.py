@@ -396,6 +396,27 @@ def test_responses_normalizes_tool_role_input_item_with_camel_call_id():
     assert request.input == [{"type": "function_call_output", "call_id": "call_1", "output": '{"ok":true}'}]
 
 
+def test_responses_normalizes_tool_role_input_item_preserves_part_order_without_delimiters():
+    payload = {
+        "model": "gpt-5.1",
+        "instructions": "hi",
+        "input": [
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": [
+                    {"type": "input_text", "text": '{"a":'},
+                    {"type": "input_text", "text": ""},
+                    {"type": "input_text", "text": "1}"},
+                ],
+            }
+        ],
+    }
+    request = ResponsesRequest.model_validate(payload)
+
+    assert request.input == [{"type": "function_call_output", "call_id": "call_1", "output": '{"a":1}'}]
+
+
 def test_v1_tool_messages_normalize_to_function_call_output():
     payload = {
         "model": "gpt-5.1",
@@ -437,8 +458,8 @@ def test_v1_assistant_tool_calls_normalize_to_function_call():
 
     assert request.input == [
         {"role": "assistant", "content": [{"type": "output_text", "text": ""}]},
-        {"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{\"q\":\"abc\"}"},
-        {"type": "function_call_output", "call_id": "call_1", "output": "{\"ok\":true}"},
+        {"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": '{"q":"abc"}'},
+        {"type": "function_call_output", "call_id": "call_1", "output": '{"ok":true}'},
         {"role": "user", "content": [{"type": "input_text", "text": "Continue"}]},
     ]
 

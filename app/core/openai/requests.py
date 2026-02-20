@@ -193,11 +193,14 @@ def _normalize_tool_output_value(content: JsonValue) -> str:
     if is_json_list(content):
         parts: list[str] = []
         for part in content:
+            if isinstance(part, str):
+                parts.append(part)
+                continue
             extracted = _extract_text_content_part(part, _TOOL_TEXT_PART_TYPES)
             if extracted is not None:
                 parts.append(extracted)
         if parts:
-            return "\n".join([part for part in parts if part])
+            return "".join(parts)
         return json.dumps(content, ensure_ascii=False, separators=(",", ":"))
     if is_json_mapping(content):
         extracted = _extract_text_content_part(content, _TOOL_TEXT_PART_TYPES)
